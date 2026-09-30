@@ -1,0 +1,10 @@
+services:
+  sci-ruvelon-gestion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sci-ruvelon-gestion
+    ports:
+      - "8787:80"
+    restart: unless-stopped
+

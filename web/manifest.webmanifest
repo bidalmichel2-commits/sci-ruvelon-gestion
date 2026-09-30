@@ -1,0 +1,12 @@
+{
+  "name": "SCI RUVELON GESTION 3",
+  "short_name": "SCI Ruvelon",
+  "description": "Suivi MEG, loyers, baux, locaux, travaux et remuneration gerant.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f4f7fa",
+  "theme_color": "#17395d",
+  "orientation": "portrait",
+  "categories": ["business", "finance", "productivity"],
+  "icons": []
+}

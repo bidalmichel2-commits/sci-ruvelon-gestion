@@ -1,0 +1,12 @@
+.git
+.openai
+.sites-checkout
+dist
+node_modules
+site-upload.tar.gz
+tests
+supabase
+README.md
+docs_DEPLOIEMENT.md
+dev-server.js
+
