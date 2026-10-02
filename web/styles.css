@@ -383,6 +383,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 
 .row-title { font-weight: 800; color: #20344b; }
 .row-sub { margin-top: 2px; color: var(--muted); font-size: 13px; }
+.row-contact { margin-top: 5px; font-size: 13px; }
+.phone-link { color: var(--blue); font-weight: 800; text-decoration: none; }
+.phone-link:hover { text-decoration: underline; }
 .row-amount { text-align: right; white-space: nowrap; color: var(--blue); font-weight: 900; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }

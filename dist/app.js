@@ -208,6 +208,26 @@
     return row.id || "";
   }
 
+  function tenantById(id) {
+    return (state.data.locataires || []).find((tenant) => tenant.id === id) || null;
+  }
+
+  function phoneDialValue(value) {
+    return String(value || "").trim().replace(/[^\d+]/g, "");
+  }
+
+  function bailTenantOptions(emptyLabel) {
+    return [{ value: "", label: emptyLabel || "-" }].concat(
+      (state.data.locataires || []).map((tenant) => {
+        const phone = String(tenant.telephone || "").trim();
+        return {
+          value: tenant.id,
+          label: `${localLabel("locataires", tenant.id)}${phone ? ` - ${phone}` : ""}`
+        };
+      })
+    );
+  }
+
   function initInstall() {
     window.addEventListener("beforeinstallprompt", (e) => {
       e.preventDefault();
@@ -472,16 +492,24 @@
       <div class="desktop-wrap">
         <div class="panel">
           <div class="panel-head"><h3>Baux</h3>${adminHtml(`<button class="primary" onclick="App.openBail()">Ajouter</button>`)}</div>
-          <div class="list">${rows.length ? rows.map((b) => `
-            <div class="row">
-              <div class="row-main">
-                <div><div class="row-title">${escapeHtml(localLabel("locataires", b.locataire_id))}</div>
-                <div class="row-sub">${escapeHtml(localLabel("locaux", b.local_id))} - ${fmtDate(b.date_debut)} au ${fmtDate(b.date_fin)}</div></div>
-                <span class="chip ${leaseChipClass(b)}">${escapeHtml(b.statut)}</span>
-              </div>
-              <div class="chips"><span class="chip">HT ${euro(b.loyer_ht)}</span><span class="chip">Charges ${euro(b.charges_mensuelles)}</span>${isSecondaryBail(b) ? `<span class="chip">Local associe</span>` : ""}${b.renouvellement_auto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
-              ${adminHtml(`<div class="actions"><button onclick="App.openBail('${b.id}')">Modifier</button></div>`)}
-            </div>`).join("") : `<div class="empty">Aucun bail</div>`}</div>
+          <div class="list">${rows.length ? rows.map((b) => {
+            const tenant = tenantById(b.locataire_id);
+            const phone = String(tenant && tenant.telephone || "").trim();
+            const phoneHtml = phone
+              ? `<a class="phone-link" href="tel:${escapeHtml(phoneDialValue(phone))}">Tel. ${escapeHtml(phone)}</a>`
+              : `<span class="muted">Telephone non renseigne</span>`;
+            return `
+              <div class="row">
+                <div class="row-main">
+                  <div><div class="row-title">${escapeHtml(localLabel("locataires", b.locataire_id))}</div>
+                  <div class="row-sub">${escapeHtml(localLabel("locaux", b.local_id))} - ${fmtDate(b.date_debut)} au ${fmtDate(b.date_fin)}</div>
+                  <div class="row-contact">${phoneHtml}</div></div>
+                  <span class="chip ${leaseChipClass(b)}">${escapeHtml(b.statut)}</span>
+                </div>
+                <div class="chips"><span class="chip">HT ${euro(b.loyer_ht)}</span><span class="chip">Charges ${euro(b.charges_mensuelles)}</span>${isSecondaryBail(b) ? `<span class="chip">Local associe</span>` : ""}${b.renouvellement_auto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
+                ${adminHtml(`<div class="actions"><button onclick="App.openBail('${b.id}')">Modifier</button></div>`)}
+              </div>`;
+          }).join("") : `<div class="empty">Aucun bail</div>`}</div>
         </div>
       </div>`;
   }
@@ -948,7 +976,7 @@
       openModal("Bail", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
         { type: "select", name: "local_id", label: "Local", value: r.local_id, options: options("locaux", "Choisir") },
-        { type: "select", name: "locataire_id", label: "Locataire", value: r.locataire_id, options: options("locataires", "Choisir") },
+        { type: "select", name: "locataire_id", label: "Locataire et telephone", value: r.locataire_id, options: bailTenantOptions("Choisir") },
         { name: "type_bail", label: "Type bail", value: r.type_bail || "" },
         { type: "date", name: "date_debut", label: "Debut", value: r.date_debut || "" },
         { type: "date", name: "date_fin", label: "Fin", value: r.date_fin || "" },
