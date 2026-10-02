@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -174,9 +175,19 @@ def prime_notes(sheet):
     return notes, round(sum(references), 2)
 
 
+def workbook_year(workbook):
+    title = text(workbook["RÉCAPITULATIF ANNUEL"].cell(1, 1).value)
+    match = re.search(r"\b(20\d{2})\b", title)
+    if not match:
+        raise RuntimeError("Annee introuvable dans le titre du recapitulatif annuel.")
+    return int(match.group(1))
+
+
 def extract_rows(workbook_path):
     workbook = openpyxl.load_workbook(workbook_path, data_only=True, read_only=True)
     recap = workbook["RÉCAPITULATIF ANNUEL"]
+    year = workbook_year(workbook)
+    include_other = year != 2026
     rows = []
     checks = []
 
@@ -186,25 +197,40 @@ def extract_rows(workbook_path):
         if not month_number:
             continue
         sheet = workbook[month_name]
-        encaissements = number(recap.cell(row_number, 2).value)
-        prime = number(recap.cell(row_number, 5).value)
+        encaissements = number(sheet.cell(20, 4).value)
+        prime = number(sheet.cell(53, 5).value)
         km = number(sheet.cell(44, 6).value)
-        other = number(recap.cell(row_number, 7).value)
-        hours = number(recap.cell(row_number, 9).value)
+        other = number(sheet.cell(44, 8).value)
+        hours = number(sheet.cell(44, 5).value)
+        encaissement_details = encaissement_lines(sheet)
+        intervention_details = intervention_lines(sheet)
+        prime_details = prime_lines(sheet)
 
-        if not any((encaissements, prime, km, other, hours)):
+        if not any((encaissements, prime, km, other, hours, encaissement_details, intervention_details, prime_details)):
             continue
 
         primes, reference_total = prime_notes(sheet)
         details = {
             "version": 1,
-            "encaissements": encaissement_lines(sheet),
-            "interventions": intervention_lines(sheet),
-            "primes": prime_lines(sheet),
-            "notes": "Import depuis SCI_RUVELON_Suivi_Gestion_2026.xlsx. Les autres frais 2026 sont indiques mais exclus du total du compte courant.",
+            "encaissements": encaissement_details,
+            "interventions": intervention_details,
+            "primes": prime_details,
+            "notes": (
+                f"Import depuis {os.path.basename(workbook_path)}. "
+                + ("Les autres frais sont inclus dans le total du compte courant."
+                   if include_other else
+                   "Les autres frais 2026 sont indiques mais exclus du total du compte courant.")
+            ),
         }
-        calculated_total = round(encaissements * 0.07 * 0.70 + km * 0.636 + prime, 2)
-        source_total = number(recap.cell(row_number, 8).value)
+        calculated_total = round(
+            encaissements * 0.07 * 0.70 + km * 0.636 + prime + (other if include_other else 0),
+            2,
+        )
+        # En 2026, les autres frais sont seulement informatifs : le recapitulatif
+        # annuel contient donc le total de reference hors autres frais.
+        source_total = number(
+            sheet.cell(61, 4).value if include_other else recap.cell(row_number, 8).value
+        )
         checks.append({
             "mois": month_name.title(),
             "source": source_total,
@@ -213,8 +239,8 @@ def extract_rows(workbook_path):
         })
 
         rows.append({
-            "annee": 2026,
-            "mois": f"2026-{month_number:02d}-01",
+            "annee": year,
+            "mois": f"{year}-{month_number:02d}-01",
             "encaissements_ht": encaissements,
             "heures": hours,
             "km": km,
@@ -225,12 +251,12 @@ def extract_rows(workbook_path):
             "prime_edl": prime,
             "prime_responsabilite": 0,
             "autres_frais": other,
-            "autres_frais_inclus_total": False,
+            "autres_frais_inclus_total": include_other,
             "note_prime": " | ".join(primes),
             "observations": json.dumps(details, ensure_ascii=False),
         })
 
-    return rows, checks
+    return rows, checks, year
 
 
 def authenticate():
@@ -244,10 +270,10 @@ def authenticate():
     return auth["access_token"]
 
 
-def import_rows(rows):
+def import_rows(rows, year):
     token = authenticate()
     existing = request(
-        "/rest/v1/remuneration_gerant?select=id,mois&annee=eq.2026",
+        f"/rest/v1/remuneration_gerant?select=id,mois&annee=eq.{year}",
         token=token,
     ) or []
     existing_months = {str(item["mois"])[:10] for item in existing}
@@ -266,27 +292,29 @@ def import_rows(rows):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Import du suivi de remuneration 2026")
+    parser = argparse.ArgumentParser(description="Import annuel du suivi de remuneration")
     parser.add_argument("workbook")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    rows, checks = extract_rows(args.workbook)
+    rows, checks, year = extract_rows(args.workbook)
     if any(abs(check["ecart"]) > 0.02 for check in checks):
         raise RuntimeError("Un total mensuel ne correspond pas aux regles de calcul.")
 
     summary = {
+        "annee": year,
         "mois_extraits": len(rows),
         "total_encaissements_ht": round(sum(row["encaissements_ht"] for row in rows), 2),
         "total_heures": round(sum(row["heures"] for row in rows), 2),
         "total_km": round(sum(row["km"] for row in rows), 2),
         "total_primes": round(sum(row["prime_edl"] for row in rows), 2),
-        "autres_frais_hors_total": round(sum(row["autres_frais"] for row in rows), 2),
-        "total_compte_courant_2026": round(sum(check["calcule"] for check in checks), 2),
+        "autres_frais": round(sum(row["autres_frais"] for row in rows), 2),
+        "autres_frais_inclus_total": year != 2026,
+        "total_compte_courant": round(sum(check["calcule"] for check in checks), 2),
         "controles": checks,
     }
     if not args.dry_run:
-        summary.update(import_rows(rows))
+        summary.update(import_rows(rows, year))
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
 
