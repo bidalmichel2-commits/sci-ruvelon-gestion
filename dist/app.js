@@ -72,8 +72,8 @@
       r.remuneration_apres_abattement = round2((Number(r.encaissements_ht) || 0) * 0.07 * 0.70);
       r.frais_km = round2((Number(r.km) || 0) * (Number(r.bareme_km) || 0.636));
       r.total_compte_courant = round2(
-        r.remuneration_apres_abattement +
-        r.frais_km +
+        (Number(r.encaissements_ht) || 0) * 0.07 * 0.70 +
+        (Number(r.km) || 0) * (Number(r.bareme_km) || 0.636) +
         (Number(r.prime_edl) || 0) +
         (Number(r.prime_responsabilite) || 0) +
         (r.autres_frais_inclus_total ? (Number(r.autres_frais) || 0) : 0)
@@ -647,21 +647,110 @@
     return `<div class="desktop-wrap">${renderRemuneration()}</div>`;
   }
 
+  function monthLabel(value) {
+    if (!value) return "";
+    const date = new Date(`${String(value).slice(0, 7)}-15T12:00:00`);
+    return date.toLocaleDateString("fr-FR", { month: "long", year: "numeric" });
+  }
+
+  function parseRemunerationDetails(row) {
+    const fallback = {
+      version: 1,
+      encaissements: [],
+      interventions: [],
+      primes: [],
+      notes: ""
+    };
+    const raw = String(row && row.observations || "").trim();
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && Number(parsed.version) >= 1) {
+          return {
+            version: 1,
+            encaissements: Array.isArray(parsed.encaissements) ? parsed.encaissements : [],
+            interventions: Array.isArray(parsed.interventions) ? parsed.interventions : [],
+            primes: Array.isArray(parsed.primes) ? parsed.primes : [],
+            notes: String(parsed.notes || "")
+          };
+        }
+      } catch (error) {
+        fallback.notes = raw;
+      }
+    }
+    if (Number(row && row.encaissements_ht) > 0) {
+      fallback.encaissements.push({
+        local: "",
+        locataire: "Total mensuel",
+        loyer_ht: Number(row.encaissements_ht) || 0,
+        encaissement_ht: Number(row.encaissements_ht) || 0,
+        observations: ""
+      });
+    }
+    return fallback;
+  }
+
+  function remunerationMonthValues(row) {
+    return {
+      brut: Number(row.remuneration_brute_7pc) || round2((Number(row.encaissements_ht) || 0) * 0.07),
+      net: Number(row.remuneration_apres_abattement) || round2((Number(row.encaissements_ht) || 0) * 0.07 * 0.70),
+      primes: round2((Number(row.prime_edl) || 0) + (Number(row.prime_responsabilite) || 0)),
+      fraisKm: Number(row.frais_km) || round2((Number(row.km) || 0) * (Number(row.bareme_km) || 0.636)),
+      total: Number(row.total_compte_courant) || 0
+    };
+  }
+
   function renderRemuneration() {
     const rows = state.data.remuneration_gerant.filter((r) => String(r.annee) === String(state.year)).sort((a, b) => String(a.mois).localeCompare(String(b.mois)));
     const total = sum(rows, "total_compte_courant");
     const ht = sum(rows, "encaissements_ht");
+    const net = sum(rows, "remuneration_apres_abattement");
+    const primes = round2(sum(rows, "prime_edl") + sum(rows, "prime_responsabilite"));
+    const fraisKm = sum(rows, "frais_km");
+    const heures = sum(rows, "heures");
+    const autres = sum(rows, "autres_frais");
     return `
       <div class="panel">
-        <div class="panel-head"><h3>Remuneration gerant</h3>${adminHtml(`<button class="primary" onclick="App.openRemuneration()">Saisir</button>`)}</div>
+        <div class="panel-head"><h3>Suivi remuneration gerant</h3>${adminHtml(`<button class="primary" onclick="App.openRemuneration()">Saisir un mois</button>`)}</div>
         <div class="toolbar"><input type="number" value="${state.year}" onchange="App.setYear(this.value)">${adminHtml(`<button class="secondary" onclick="App.prepareRemunerationYear()">Creer mois</button>`)}</div>
-        <div class="cards"><div class="card"><small>HT encaisse</small><strong>${euro(ht)}</strong></div><div class="card green"><small>Compte courant</small><strong>${euro(total)}</strong></div></div>
-        <div class="list" style="margin-top:12px">${rows.length ? rows.map((r) => `
-          <div class="row">
-            <div class="row-main"><div><div class="row-title">${String(r.mois).slice(0,7)}</div><div class="row-sub">HT ${euro(r.encaissements_ht)} - prime ${euro((Number(r.prime_edl)||0)+(Number(r.prime_responsabilite)||0))}</div></div><div class="row-amount">${euro(r.total_compte_courant)}</div></div>
-            <div class="chips"><span class="chip">Km ${Number(r.km)||0}</span><span class="chip ${r.autres_frais_inclus_total ? "orange" : ""}">Autres ${euro(r.autres_frais)} ${r.autres_frais_inclus_total ? "inclus" : "hors total"}</span></div>
-            ${adminHtml(`<div class="actions"><button onclick="App.openRemuneration('${r.id}')">Modifier</button></div>`)}
-          </div>`).join("") : `<div class="empty">Aucune ligne pour ${state.year}</div>`}</div>
+        <div class="cards remuneration-cards">
+          <div class="card"><small>HT encaisse</small><strong>${euro(ht)}</strong></div>
+          <div class="card"><small>Remuneration nette</small><strong>${euro(net)}</strong></div>
+          <div class="card"><small>Primes</small><strong>${euro(primes)}</strong></div>
+          <div class="card"><small>Frais km</small><strong>${euro(fraisKm)}</strong></div>
+          <div class="card"><small>Heures</small><strong>${heures.toFixed(2)}</strong></div>
+          <div class="card green"><small>Compte courant</small><strong>${euro(total)}</strong></div>
+        </div>
+        ${String(state.year) === "2026" && autres ? `<div class="notice info">Autres frais 2026 : ${euro(autres)} indiques pour memoire et exclus du compte courant.</div>` : ""}
+        <div class="table-wrap desktop-table remuneration-table">
+          <table class="data-table">
+            <thead><tr><th>Mois</th><th class="num">HT encaisse</th><th class="num">Brute 7%</th><th class="num">Nette 70%</th><th class="num">Primes</th><th class="num">Frais km</th><th class="num">Autres frais</th><th class="num">Total mois</th><th class="num">Heures</th><th></th></tr></thead>
+            <tbody>${rows.map((r) => {
+              const values = remunerationMonthValues(r);
+              return `<tr>
+                <td><strong>${escapeHtml(monthLabel(r.mois))}</strong></td>
+                <td class="num">${euro(r.encaissements_ht)}</td>
+                <td class="num">${euro(values.brut)}</td>
+                <td class="num">${euro(values.net)}</td>
+                <td class="num">${euro(values.primes)}</td>
+                <td class="num">${euro(values.fraisKm)}</td>
+                <td class="num">${euro(r.autres_frais)}<div class="table-sub">${r.autres_frais_inclus_total ? "inclus" : "hors total"}</div></td>
+                <td class="num"><strong>${euro(values.total)}</strong></td>
+                <td class="num">${Number(r.heures || 0).toFixed(2)}</td>
+                <td>${adminHtml(`<button class="table-action" onclick="App.openRemuneration('${r.id}')">Detail</button>`)}</td>
+              </tr>`;
+            }).join("")}</tbody>
+            ${rows.length ? `<tfoot><tr><th>Total ${escapeHtml(state.year)}</th><th class="num">${euro(ht)}</th><th></th><th class="num">${euro(net)}</th><th class="num">${euro(primes)}</th><th class="num">${euro(fraisKm)}</th><th class="num">${euro(autres)}</th><th class="num">${euro(total)}</th><th class="num">${heures.toFixed(2)}</th><th></th></tr></tfoot>` : ""}
+          </table>
+        </div>
+        <div class="list mobile-list">${rows.length ? rows.map((r) => {
+          const values = remunerationMonthValues(r);
+          return `<div class="row">
+            <div class="row-main"><div><div class="row-title">${escapeHtml(monthLabel(r.mois))}</div><div class="row-sub">HT ${euro(r.encaissements_ht)} - ${Number(r.heures || 0).toFixed(2)} h</div></div><div class="row-amount">${euro(values.total)}</div></div>
+            <div class="chips"><span class="chip">Nette ${euro(values.net)}</span><span class="chip">Primes ${euro(values.primes)}</span><span class="chip">Km ${Number(r.km) || 0}</span><span class="chip ${r.autres_frais_inclus_total ? "orange" : ""}">Autres ${euro(r.autres_frais)}</span></div>
+            ${adminHtml(`<div class="actions"><button onclick="App.openRemuneration('${r.id}')">Ouvrir le detail</button></div>`)}
+          </div>`;
+        }).join("") : `<div class="empty">Aucune ligne pour ${state.year}</div>`}</div>
       </div>`;
   }
 
@@ -793,6 +882,157 @@
     ].filter(Boolean).join(" ");
   }
 
+  function remunerationLineHtml(kind, row) {
+    const r = row || {};
+    const removeButton = `<button class="detail-remove" type="button" title="Retirer cette ligne" aria-label="Retirer cette ligne" onclick="App.removeRemunerationLine(this)">×</button>`;
+    if (kind === "encaissements") {
+      return `<div class="detail-line encaissement-line" data-detail-kind="encaissements">
+        ${removeButton}
+        <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
+        <label>Locataire<input data-field="locataire" value="${escapeHtml(r.locataire || "")}"></label>
+        <label>Loyer HT habituel<input type="number" step="0.01" min="0" data-field="loyer_ht" value="${escapeHtml(r.loyer_ht || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Encaissement reel HT<input type="number" step="0.01" min="0" data-field="encaissement_ht" value="${escapeHtml(r.encaissement_ht || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label class="detail-note">Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label>
+      </div>`;
+    }
+    if (kind === "interventions") {
+      return `<div class="detail-line intervention-line" data-detail-kind="interventions">
+        ${removeButton}
+        <label>Date<input type="date" data-field="date" value="${escapeHtml(String(r.date || "").slice(0, 10))}"></label>
+        <label>Activite<input data-field="activite" value="${escapeHtml(r.activite || "")}"></label>
+        <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
+        <label>Heures<input type="number" step="0.25" min="0" data-field="heures" value="${escapeHtml(r.heures || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Km aller-retour<input type="number" step="0.1" min="0" data-field="km" value="${escapeHtml(r.km || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Autres frais<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label class="detail-note">Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label>
+      </div>`;
+    }
+    const situations = [
+      ["Sans interruption", "Sans interruption - 100%"],
+      ["Interruption moins 1 mois", "Interruption < 1 mois - 50%"],
+      ["Interruption plus 1 mois", "Interruption > 1 mois - 25%"],
+      ["Montant manuel", "Montant manuel"]
+    ];
+    const selected = r.situation || "Sans interruption";
+    return `<div class="detail-line prime-line" data-detail-kind="primes">
+      ${removeButton}
+      <label>Date<input type="date" data-field="date" value="${escapeHtml(String(r.date || "").slice(0, 10))}"></label>
+      <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
+      <label>Type<input data-field="type" value="${escapeHtml(r.type || "Entree")}"></label>
+      <label>Loyer HT de reference<input type="number" step="0.01" min="0" data-field="loyer_reference" value="${escapeHtml(r.loyer_reference || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+      <label>Situation<select data-field="situation" onchange="App.recalcRemunerationForm(this.form)">${situations.map((option) => `<option value="${option[0]}" ${option[0] === selected ? "selected" : ""}>${option[1]}</option>`).join("")}</select></label>
+      <label>Prime<input type="number" step="0.01" min="0" data-field="prime" value="${escapeHtml(r.prime || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+      <label class="detail-note">Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label>
+    </div>`;
+  }
+
+  function remunerationFormHtml(row) {
+    const r = row || {};
+    const details = parseRemunerationDetails(r);
+    const encaissements = details.encaissements.length ? details.encaissements : [{}];
+    const interventions = details.interventions.length ? details.interventions : [{}];
+    const primes = details.primes.length ? details.primes : [{}];
+    return `<form id="edit-form" class="remuneration-form" data-table="remuneration_gerant" data-action="saveRemuneration">
+      <input type="hidden" name="id" value="${escapeHtml(r.id || "")}">
+      <input type="hidden" name="bareme_km" value="${escapeHtml(r.bareme_km || 0.636)}">
+      <div class="detail-month-head">
+        <label>Mois<input type="month" name="mois" value="${escapeHtml(String(r.mois || monthDate(state.month)).slice(0, 7))}" required></label>
+        <label>Prime responsabilite<input type="number" step="0.01" min="0" name="prime_responsabilite" value="${escapeHtml(r.prime_responsabilite || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+      </div>
+
+      <section class="detail-section">
+        <div class="detail-section-head"><div><span>1</span><h4>Encaissements HT du mois</h4></div><button type="button" class="secondary" onclick="App.addRemunerationLine('encaissements', this.form)">Ajouter</button></div>
+        <div class="detail-list" data-detail-list="encaissements">${encaissements.map((line) => remunerationLineHtml("encaissements", line)).join("")}</div>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-head"><div><span>2</span><h4>Interventions et temps passe</h4></div><button type="button" class="secondary" onclick="App.addRemunerationLine('interventions', this.form)">Ajouter</button></div>
+        <div class="detail-list" data-detail-list="interventions">${interventions.map((line) => remunerationLineHtml("interventions", line)).join("")}</div>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-head"><div><span>3</span><h4>Etats des lieux et primes</h4></div><button type="button" class="secondary" onclick="App.addRemunerationLine('primes', this.form)">Ajouter</button></div>
+        <div class="detail-list" data-detail-list="primes">${primes.map((line) => remunerationLineHtml("primes", line)).join("")}</div>
+      </section>
+
+      <section class="detail-section recap-section">
+        <div class="detail-section-head"><div><span>4</span><h4>Recapitulatif automatique</h4></div></div>
+        <div class="recap-grid">
+          <div><small>Encaissements HT</small><strong data-recap="encaissements">0.00 EUR</strong></div>
+          <div><small>Brute 7%</small><strong data-recap="brute">0.00 EUR</strong></div>
+          <div><small>Nette apres abattement</small><strong data-recap="nette">0.00 EUR</strong></div>
+          <div><small>Heures</small><strong data-recap="heures">0.00</strong></div>
+          <div><small>Frais km</small><strong data-recap="frais_km">0.00 EUR</strong></div>
+          <div><small>Primes</small><strong data-recap="primes">0.00 EUR</strong></div>
+          <div><small>Autres frais</small><strong data-recap="autres">0.00 EUR</strong></div>
+          <div class="recap-total"><small>Compte courant du mois</small><strong data-recap="total">0.00 EUR</strong></div>
+        </div>
+        <label class="notice info"><input type="checkbox" name="autres_frais_inclus_total" value="true" ${r.autres_frais_inclus_total ? "checked" : ""} onchange="App.recalcRemunerationForm(this.form)"> Integrer les autres frais au total</label>
+      </section>
+
+      <section class="detail-section">
+        <div class="detail-section-head"><div><span>5</span><h4>Observations du mois</h4></div></div>
+        <textarea name="detail_notes" rows="4">${escapeHtml(details.notes)}</textarea>
+      </section>
+
+      <div class="form-actions sticky-actions">
+        <button class="secondary" type="button" onclick="App.closeModal()">Annuler</button>
+        <button class="primary" type="submit">Enregistrer le mois</button>
+      </div>
+    </form>`;
+  }
+
+  function collectDetailLines(form, kind) {
+    return [...form.querySelectorAll(`[data-detail-kind="${kind}"]`)].map((line) => {
+      const result = {};
+      line.querySelectorAll("[data-field]").forEach((field) => {
+        result[field.dataset.field] = field.type === "number" ? numberValue(field.value) : String(field.value || "").trim();
+      });
+      return result;
+    }).filter((row) => Object.values(row).some((value) => typeof value === "number" ? value !== 0 : value !== ""));
+  }
+
+  function numberValue(value) {
+    return round2(Number(value) || 0);
+  }
+
+  function remunerationDetailTotals(form, updatePrimeInputs) {
+    const encaissements = collectDetailLines(form, "encaissements");
+    const interventions = collectDetailLines(form, "interventions");
+    const primeElements = [...form.querySelectorAll('[data-detail-kind="primes"]')];
+    const primes = primeElements.map((line) => {
+      const reference = numberValue(line.querySelector('[data-field="loyer_reference"]').value);
+      const situation = line.querySelector('[data-field="situation"]').value;
+      const primeInput = line.querySelector('[data-field="prime"]');
+      const calculated = situation === "Montant manuel" ? numberValue(primeInput.value) : round2(reference * primeRate(situation));
+      if (updatePrimeInputs && situation !== "Montant manuel") primeInput.value = calculated.toFixed(2);
+      const result = {};
+      line.querySelectorAll("[data-field]").forEach((field) => {
+        result[field.dataset.field] = field.type === "number" ? numberValue(field.value) : String(field.value || "").trim();
+      });
+      result.prime = calculated;
+      return result;
+    }).filter((row) => row.date || row.local || row.loyer_reference || row.prime || row.observations || (row.type && row.type !== "Entree"));
+    const encaissementsHt = round2(encaissements.reduce((total, line) => total + numberValue(line.encaissement_ht), 0));
+    const heures = round2(interventions.reduce((total, line) => total + numberValue(line.heures), 0));
+    const km = round2(interventions.reduce((total, line) => total + numberValue(line.km), 0));
+    const autresFrais = round2(interventions.reduce((total, line) => total + numberValue(line.autres_frais), 0));
+    const primeEdl = round2(primes.reduce((total, line) => total + numberValue(line.prime), 0));
+    const primeResponsabilite = numberValue(form.elements.prime_responsabilite.value);
+    const baremeKm = Number(form.elements.bareme_km.value) || 0.636;
+    const brute = round2(encaissementsHt * 0.07);
+    const nette = round2(brute * 0.70);
+    const fraisKm = round2(km * baremeKm);
+    const total = round2(
+      encaissementsHt * 0.07 * 0.70 +
+      km * baremeKm +
+      primeEdl +
+      primeResponsabilite +
+      (form.elements.autres_frais_inclus_total.checked ? autresFrais : 0)
+    );
+    return { encaissements, interventions, primes, encaissementsHt, heures, km, autresFrais, primeEdl, primeResponsabilite, baremeKm, brute, nette, fraisKm, total };
+  }
+
   function readForm(form) {
     const fd = new FormData(form);
     const data = {};
@@ -886,6 +1126,36 @@
       if (form.elements.total_paye && money(form.elements.total_paye.value) > total) {
         form.elements.total_paye.value = total.toFixed(2);
       }
+    },
+    addRemunerationLine(kind, form) {
+      const list = form && form.querySelector(`[data-detail-list="${kind}"]`);
+      if (!list) return;
+      list.insertAdjacentHTML("beforeend", remunerationLineHtml(kind, {}));
+      this.recalcRemunerationForm(form);
+    },
+    removeRemunerationLine(button) {
+      const form = button && button.form;
+      const line = button && button.closest("[data-detail-kind]");
+      if (line) line.remove();
+      if (form) this.recalcRemunerationForm(form);
+    },
+    recalcRemunerationForm(form) {
+      if (!form) return;
+      const totals = remunerationDetailTotals(form, true);
+      const values = {
+        encaissements: euro(totals.encaissementsHt),
+        brute: euro(totals.brute),
+        nette: euro(totals.nette),
+        heures: totals.heures.toFixed(2),
+        frais_km: euro(totals.fraisKm),
+        primes: euro(totals.primeEdl + totals.primeResponsabilite),
+        autres: euro(totals.autresFrais),
+        total: euro(totals.total)
+      };
+      Object.entries(values).forEach(([name, value]) => {
+        const target = form.querySelector(`[data-recap="${name}"]`);
+        if (target) target.textContent = value;
+      });
     },
     async requestNotifications() {
       if (!("Notification" in window)) return toast("Notifications non disponibles sur ce navigateur.");
@@ -1004,27 +1274,12 @@
     },
     openRemuneration(id) {
       if (!ensureAdminAction()) return;
-      const r = state.data.remuneration_gerant.find((x) => x.id === id) || { mois: `${state.year}-${state.month.slice(5, 7)}-01`, bareme_km: 0.636, autres_frais_inclus_total: state.year !== "2026", situation_prime: "Aucune prime" };
-      openModal("Remuneration gerant", formHtml([
-        { type: "hidden", name: "id", value: r.id || "" },
-        { type: "date", name: "mois", label: "Mois", value: r.mois || monthDate(state.month) },
-        { type: "number", step: "0.01", name: "encaissements_ht", label: "Encaissements HT", value: r.encaissements_ht || 0 },
-        { type: "number", step: "0.01", name: "heures", label: "Heures", value: r.heures || 0 },
-        { type: "number", step: "0.01", name: "km", label: "Km", value: r.km || 0 },
-        { type: "number", step: "0.01", name: "loyer_reference_prime", label: "Loyer HT reference prime", value: r.loyer_reference_prime || 0 },
-        { type: "select", name: "situation_prime", label: "Situation prime", value: r.situation_prime, options: [
-          { value: "Aucune prime", label: "Aucune prime" },
-          { value: "Sans interruption", label: "Sans interruption - 100%" },
-          { value: "Interruption moins 1 mois", label: "Interruption < 1 mois - 50%" },
-          { value: "Interruption plus 1 mois", label: "Interruption > 1 mois - 25%" },
-          { value: "Montant manuel", label: "Montant manuel" }
-        ] },
-        { type: "number", step: "0.01", name: "prime_edl", label: "Prime etat des lieux", value: r.prime_edl || 0 },
-        { type: "number", step: "0.01", name: "prime_responsabilite", label: "Prime responsabilite", value: r.prime_responsabilite || 0 },
-        { type: "number", step: "0.01", name: "autres_frais", label: "Autres frais", value: r.autres_frais || 0 },
-        { type: "checkbox", name: "autres_frais_inclus_total", label: "Integrer les autres frais au total", value: r.autres_frais_inclus_total },
-        { type: "textarea", name: "note_prime", label: "Note prime", value: r.note_prime || "" }
-      ], "remuneration_gerant", "saveRemuneration"));
+      const requestedMonth = `${state.year}-${state.month.slice(5, 7)}-01`;
+      const r = state.data.remuneration_gerant.find((x) => x.id === id)
+        || state.data.remuneration_gerant.find((x) => x.mois === requestedMonth)
+        || { mois: requestedMonth, bareme_km: 0.636, autres_frais_inclus_total: state.year !== "2026", prime_responsabilite: 0 };
+      openModal(`Remuneration - ${monthLabel(r.mois)}`, remunerationFormHtml(r));
+      this.recalcRemunerationForm(document.getElementById("edit-form"));
     },
     async prepareRemunerationYear() {
       if (!ensureAdminAction()) return;
@@ -1038,13 +1293,39 @@
     },
     async saveRemuneration(form) {
       if (!ensureAdminAction()) return;
-      const data = readForm(form);
-      data.annee = Number(String(data.mois || "").slice(0, 4));
-      data.taux_prime = primeRate(data.situation_prime);
-      if (data.situation_prime !== "Montant manuel") data.prime_edl = round2((Number(data.loyer_reference_prime) || 0) * data.taux_prime);
+      const base = readForm(form);
+      const totals = remunerationDetailTotals(form, true);
+      const mois = monthDate(String(base.mois || "").slice(0, 7));
+      const existing = state.data.remuneration_gerant.find((row) => row.mois === mois && row.id !== base.id);
+      const notes = String(base.detail_notes || "").trim();
+      const details = {
+        version: 1,
+        encaissements: totals.encaissements,
+        interventions: totals.interventions,
+        primes: totals.primes,
+        notes
+      };
+      const data = {
+        id: base.id || (existing && existing.id) || "",
+        annee: Number(String(mois).slice(0, 4)),
+        mois,
+        encaissements_ht: totals.encaissementsHt,
+        heures: totals.heures,
+        km: totals.km,
+        bareme_km: totals.baremeKm,
+        loyer_reference_prime: round2(totals.primes.reduce((sum, line) => sum + numberValue(line.loyer_reference), 0)),
+        situation_prime: totals.primeEdl ? "Montant manuel" : "Aucune prime",
+        taux_prime: 0,
+        prime_edl: totals.primeEdl,
+        prime_responsabilite: totals.primeResponsabilite,
+        autres_frais: totals.autresFrais,
+        autres_frais_inclus_total: !!base.autres_frais_inclus_total,
+        note_prime: totals.primes.map((line) => [line.date, line.local, line.type, euro(line.prime)].filter(Boolean).join(" - ")).join(" | "),
+        observations: JSON.stringify(details)
+      };
       await dbSave("remuneration_gerant", data);
       closeModal();
-      await refresh("Remuneration enregistree");
+      await refresh("Suivi mensuel enregistre");
     },
     async savePassword(form) {
       if (!sb) return toast("Base en ligne non configuree.");

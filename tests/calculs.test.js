@@ -31,8 +31,8 @@ function remunerationGerant({ encaissementsHt, km, baremeKm, primeEdl, primeResp
     remunerationNette,
     fraisKm,
     totalCompteCourant: money(
-      remunerationNette +
-      fraisKm +
+      encaissementsHt * 0.07 * 0.70 +
+      km * baremeKm +
       money(primeEdl) +
       money(primeResponsabilite) +
       (autresFraisInclus ? money(autresFrais) : 0)
@@ -45,6 +45,22 @@ function niveauAlerteBail(jours) {
   if (jours <= 92) return "three";
   if (jours <= 183) return "six";
   return null;
+}
+
+function remunerationDetail({ encaissements, interventions, primes, primeResponsabilite = 0, autresFraisInclus = false }) {
+  const encaissementsHt = money(encaissements.reduce((total, row) => total + money(row.encaissementHt), 0));
+  const heures = money(interventions.reduce((total, row) => total + money(row.heures), 0));
+  const km = money(interventions.reduce((total, row) => total + money(row.km), 0));
+  const autresFrais = money(interventions.reduce((total, row) => total + money(row.autresFrais), 0));
+  const primeEdl = money(primes.reduce((total, row) => total + money(row.prime), 0));
+  return {
+    encaissementsHt,
+    heures,
+    km,
+    autresFrais,
+    primeEdl,
+    total: money(encaissementsHt * 0.07 * 0.70 + km * 0.636 + primeEdl + primeResponsabilite + (autresFraisInclus ? autresFrais : 0))
+  };
 }
 
 const loyer = loyerMensuel({
@@ -96,5 +112,24 @@ assert.equal(niveauAlerteBail(92), "three");
 assert.equal(niveauAlerteBail(93), "six");
 assert.equal(niveauAlerteBail(183), "six");
 assert.equal(niveauAlerteBail(184), null);
+
+const detailMai = remunerationDetail({
+  encaissements: [{ encaissementHt: 5278.01 }],
+  interventions: [
+    { heures: 30, km: 58, autresFrais: 87.76 },
+    { heures: 3, km: 36, autresFrais: 0 }
+  ],
+  primes: [{ prime: 366.67 }, { prime: 133.33 }],
+  autresFraisInclus: false
+});
+
+assert.deepEqual(detailMai, {
+  encaissementsHt: 5278.01,
+  heures: 33,
+  km: 94,
+  autresFrais: 87.76,
+  primeEdl: 500,
+  total: 818.41
+});
 
 console.log("OK - calculs loyers, remuneration et alertes baux");

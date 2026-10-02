@@ -47,6 +47,18 @@ def display_date(value):
     return text(value).split(" ")[0]
 
 
+def iso_date(value):
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y-%m-%d")
+    raw = text(value).split(" ")[0]
+    if not raw:
+        return ""
+    try:
+        return datetime.fromisoformat(raw).strftime("%Y-%m-%d")
+    except ValueError:
+        return raw
+
+
 def request(path, method="GET", body=None, token=None, prefer=None):
     headers = {"apikey": SUPABASE_KEY, "Content-Type": "application/json"}
     if token:
@@ -64,30 +76,80 @@ def request(path, method="GET", body=None, token=None, prefer=None):
         raise RuntimeError(f"Supabase {exc.code}: {detail}") from exc
 
 
-def intervention_notes(sheet):
-    notes = []
+def encaissement_lines(sheet):
+    rows = []
+    for row in range(9, 20):
+        local = text(sheet.cell(row, 1).value)
+        tenant = text(sheet.cell(row, 2).value)
+        rent = number(sheet.cell(row, 3).value)
+        received = number(sheet.cell(row, 4).value)
+        observation = text(sheet.cell(row, 5).value)
+        if not any((tenant, rent, received, observation)):
+            continue
+        rows.append({
+            "local": local,
+            "locataire": tenant,
+            "loyer_ht": rent,
+            "encaissement_ht": received,
+            "observations": observation,
+        })
+    return rows
+
+
+def intervention_lines(sheet):
+    rows = []
     for row in range(24, 44):
         activity = text(sheet.cell(row, 3).value)
+        local = text(sheet.cell(row, 4).value)
         hours = number(sheet.cell(row, 5).value)
         km = number(sheet.cell(row, 6).value)
         other = number(sheet.cell(row, 8).value)
         observation = text(sheet.cell(row, 9).value)
-        if not any((activity, hours, km, other, observation)):
+        if not any((activity, local, hours, km, other, observation)):
             continue
-        parts = [display_date(sheet.cell(row, 1).value), activity]
-        local = text(sheet.cell(row, 4).value)
-        if local:
-            parts.append("local " + local)
-        if hours:
-            parts.append(f"{hours:g} h")
-        if km:
-            parts.append(f"{km:g} km")
-        if other:
-            parts.append(f"autres frais {other:.2f} EUR")
-        if observation:
-            parts.append(observation)
-        notes.append(" - ".join(part for part in parts if part))
-    return notes
+        rows.append({
+            "date": iso_date(sheet.cell(row, 1).value),
+            "activite": activity,
+            "local": local,
+            "heures": hours,
+            "km": km,
+            "autres_frais": other,
+            "observations": observation,
+        })
+    return rows
+
+
+def prime_situation(reference, prime):
+    if not reference:
+        return "Montant manuel"
+    ratio = round(prime / reference, 4)
+    if abs(ratio - 1) <= 0.001:
+        return "Sans interruption"
+    if abs(ratio - 0.5) <= 0.001:
+        return "Interruption moins 1 mois"
+    if abs(ratio - 0.25) <= 0.001:
+        return "Interruption plus 1 mois"
+    return "Montant manuel"
+
+
+def prime_lines(sheet):
+    rows = []
+    for row in range(48, 53):
+        values = [sheet.cell(row, col).value for col in range(1, 7)]
+        if not any(value not in (None, "") for value in values):
+            continue
+        reference = number(values[3])
+        prime = number(values[4])
+        rows.append({
+            "date": iso_date(values[0]),
+            "local": text(values[1]),
+            "type": text(values[2]),
+            "loyer_reference": reference,
+            "situation": prime_situation(reference, prime),
+            "prime": prime,
+            "observations": text(values[5]),
+        })
+    return rows
 
 
 def prime_notes(sheet):
@@ -133,8 +195,14 @@ def extract_rows(workbook_path):
         if not any((encaissements, prime, km, other, hours)):
             continue
 
-        interventions = intervention_notes(sheet)
         primes, reference_total = prime_notes(sheet)
+        details = {
+            "version": 1,
+            "encaissements": encaissement_lines(sheet),
+            "interventions": intervention_lines(sheet),
+            "primes": prime_lines(sheet),
+            "notes": "Import depuis SCI_RUVELON_Suivi_Gestion_2026.xlsx. Les autres frais 2026 sont indiques mais exclus du total du compte courant.",
+        }
         calculated_total = round(encaissements * 0.07 * 0.70 + km * 0.636 + prime, 2)
         source_total = number(recap.cell(row_number, 8).value)
         checks.append({
@@ -143,13 +211,6 @@ def extract_rows(workbook_path):
             "calcule": calculated_total,
             "ecart": round(source_total - calculated_total, 2),
         })
-
-        observations = [
-            "Import depuis SCI_RUVELON_Suivi_Gestion_2026.xlsx.",
-            "Les autres frais 2026 sont indiques mais exclus du total du compte courant.",
-        ]
-        if interventions:
-            observations.append("Interventions : " + " | ".join(interventions))
 
         rows.append({
             "annee": 2026,
@@ -166,7 +227,7 @@ def extract_rows(workbook_path):
             "autres_frais": other,
             "autres_frais_inclus_total": False,
             "note_prime": " | ".join(primes),
-            "observations": " ".join(observations),
+            "observations": json.dumps(details, ensure_ascii=False),
         })
 
     return rows, checks
