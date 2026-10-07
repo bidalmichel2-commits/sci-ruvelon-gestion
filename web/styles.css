@@ -257,6 +257,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 }
 
 .grid { display: grid; gap: 14px; }
+.works-filters input[type="search"] { flex: 1; max-width: none; min-width: 180px; }
+.works-table td { vertical-align: top; }
+.works-table td:nth-child(2) { min-width: 240px; max-width: 360px; }
+.works-details { margin-top: 8px; font-size: 12px; white-space: normal; overflow-wrap: anywhere; }
+.works-details summary { cursor: pointer; color: var(--blue); font-weight: 700; }
+.works-details p { margin: 8px 0; white-space: pre-line; }
+.works-amounts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.works-amounts span { font-size: 12px; color: var(--muted); }
+.works-amounts b { display: block; color: var(--blue); margin-top: 4px; }
+.works-summary { min-width: 580px; }
+.works-panel .panel-head > button { width: auto; flex-shrink: 0; padding: 0 14px; margin-top: 0; }
+.works-amounts b { overflow-wrap: anywhere; }
 
 .cards {
   display: grid;
@@ -674,6 +686,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 
 @media (max-width: 430px) {
   .cards { grid-template-columns: 1fr; }
+  .works-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .works-cards .card strong { font-size: 18px; }
   .toolbar { grid-template-columns: 1fr; }
   .encaissement-line, .intervention-line, .prime-line, .recap-grid { grid-template-columns: 1fr; }
   .detail-line .detail-note { grid-column: auto; }

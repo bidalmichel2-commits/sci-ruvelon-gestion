@@ -9,6 +9,9 @@
     route: "dashboard",
     month: currentMonth(),
     year: String(new Date().getFullYear()),
+    travauxYear: "",
+    travauxStatus: "",
+    travauxSearch: "",
     user: null,
     profile: null,
     isAdmin: false,
@@ -668,16 +671,66 @@
   }
 
   function renderTravaux() {
-    const rows = state.data.travaux.sort((a, b) => String(a.priorite).localeCompare(String(b.priorite)));
+    const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) }));
+    const years = [...new Set(all.map(t => String(t.detail.annee || "Non programme")))].sort();
+    const statuses = [...new Set([...travauxStatuses, ...all.map(t => t.statut)])];
+    const query = state.travauxSearch.toLocaleLowerCase("fr");
+    const rows = all.filter(t => (!state.travauxYear || String(t.detail.annee || "Non programme") === state.travauxYear) &&
+      (!state.travauxStatus || t.statut === state.travauxStatus) &&
+      (!query || [t.titre, t.description, t.entreprise, t.detail.localisation, t.detail.notes].join(" ").toLocaleLowerCase("fr").includes(query)))
+      .sort((a, b) => String(a.detail.annee || 9999).localeCompare(String(b.detail.annee || 9999)) || String(a.priorite).localeCompare(String(b.priorite)));
+    const closed = t => /Soldé|Payé|Paye|Abandonn|Realise|Réceptionné/.test(t.statut);
+    const card = t => `<div class="row">
+      <div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id) || "General")}</div></div><span class="chip">${escapeHtml(t.detail.annee || "Non programme")}</span></div>
+      <div class="chips"><span class="chip ${/^P[12]|Critique|Urgente/.test(t.priorite) ? "red" : "orange"}">${escapeHtml(t.priorite)}</span><span class="chip ${closed(t) ? "green" : ""}">${escapeHtml(t.statut)}</span></div>
+      <div class="works-amounts"><span>Estimation HT <b>${euro(t.montant_estime)}</b></span><span>Devis HT <b>${t.detail.devis_ht == null ? "—" : euro(t.detail.devis_ht)}</b></span><span>Réalisé HT <b>${euro(t.montant_reel)}</b></span></div>
+      ${travauxNotesHtml(t)}
+      ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button></div>`)}
+    </div>`;
     return `
+      <div class="cards works-cards">
+        <div class="card"><small>Opérations à suivre</small><strong>${rows.filter(t => !closed(t)).length}</strong></div>
+        <div class="card orange"><small>Estimation HT</small><strong>${euro(sum(rows, "montant_estime"))}</strong></div>
+        <div class="card"><small>Devis reçus HT</small><strong>${euro(rows.reduce((s,t) => s + Number(t.detail.devis_ht || 0), 0))}</strong></div>
+        <div class="card green"><small>Réalisé HT</small><strong>${euro(sum(rows, "montant_reel"))}</strong></div>
+      </div>
       <div class="panel">
-        <div class="panel-head"><h3>Travaux a suivre</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
-        <div class="list">${rows.length ? rows.map((t) => `
-          <div class="row">
-            <div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(localLabel("locaux", t.local_id))} - ${escapeHtml(t.statut)}</div></div><span class="chip ${t.priorite === "Urgente" || t.priorite === "Critique" ? "red" : "orange"}">${escapeHtml(t.priorite)}</span></div>
-            ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button></div>`)}
-          </div>`).join("") : `<div class="empty">Aucun travaux</div>`}</div>
+        <div class="panel-head"><h3>Programmation par année</h3></div>
+        <div class="table-wrap desktop-table"><table class="data-table works-summary"><thead><tr><th>Année cible</th><th>Opérations</th><th>Estimation HT</th><th>Devis HT</th><th>Réalisé HT</th></tr></thead><tbody>${years.map(y => {
+          const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
+          return `<tr><td><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button></td><td>${group.length}</td><td>${euro(sum(group,"montant_estime"))}</td><td>${euro(group.reduce((s,t)=>s+Number(t.detail.devis_ht||0),0))}</td><td>${euro(sum(group,"montant_reel"))}</td></tr>`;
+        }).join("")}</tbody></table></div>
+        <div class="list mobile-list">${years.map(y => {
+          const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
+          return `<div class="row"><div class="row-main"><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button><span>${group.length} opérations</span></div><div class="works-amounts"><span>Estimation HT<b>${euro(sum(group,"montant_estime"))}</b></span><span>Devis HT<b>${euro(group.reduce((s,t)=>s+Number(t.detail.devis_ht||0),0))}</b></span><span>Réalisé HT<b>${euro(sum(group,"montant_reel"))}</b></span></div></div>`;
+        }).join("")}</div>
+      </div>
+      <div class="panel works-panel">
+        <div class="panel-head"><h3>${rows.length} travaux / études</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
+        <div class="toolbar works-filters">
+          <input type="search" aria-label="Rechercher des travaux" placeholder="Rechercher travaux, lieu, entreprise" value="${escapeHtml(state.travauxSearch)}" onchange="App.filterTravaux('travauxSearch',this.value)">
+          <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
+          <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
+        </div>
+        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(t.montant_estime)}</td><td class="num">${t.detail.devis_ht==null?"—":euro(t.detail.devis_ht)}</td><td class="num">${euro(t.montant_reel)}</td><td>${adminHtml(`<button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
+        <div class="list mobile-list">${rows.length?rows.map(card).join(""):'<div class="empty">Aucune opération pour ces filtres</div>'}</div>
       </div>`;
+  }
+
+  const travauxStatuses = ["0 - À chiffrer", "1 - Devis demandé", "2 - Devis reçu", "3 - Validé propriétaire", "4 - OS émis", "5 - En cours", "6 - Réceptionné", "7 - Soldé / Payé", "X - Reporté", "X - Abandonné"];
+
+  function travauxDetails(row) {
+    try {
+      const d = JSON.parse(row.observations || "{}");
+      if (d.version_travaux) return d;
+    } catch (error) {}
+    return { annee: row.date_prevue ? Number(row.date_prevue.slice(0,4)) : null, localisation: "", notes: row.observations || "", devis_ht: null };
+  }
+
+  function travauxNotesHtml(t) {
+    const d = t.detail || travauxDetails(t);
+    const ppi = Object.entries(d.ppi || {}).filter(([,value])=>Number(value)).map(([year,value])=>`${year} : ${euro(value)} HT`).join(" / ");
+    return `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}${d.etude?`<p><b>Étude associée :</b> ${escapeHtml(d.etude.filter(v=>v!==null).join(" · "))}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
   }
 
   function renderRemunerationScreen() {
@@ -1113,6 +1166,11 @@
     go(route) { state.route = route; render(); },
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
+    filterTravaux(field, value) {
+      if (!["travauxYear", "travauxStatus", "travauxSearch"].includes(field)) return;
+      state[field] = value;
+      render();
+    },
     installApp() { $("#install-btn").click(); },
     async copyInstallLink() {
       const installUrl = `${location.origin}${location.pathname}`;
@@ -1328,14 +1386,25 @@
     },
     openTravaux(id) {
       if (!ensureAdminAction()) return;
-      const r = state.data.travaux.find((x) => x.id === id) || { statut: "A faire", priorite: "Normale" };
+      const r = state.data.travaux.find((x) => x.id === id) || { statut: travauxStatuses[0], priorite: "P4" };
+      const d = travauxDetails(r);
       openModal("Travaux", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
-        { name: "titre", label: "Titre", value: r.titre || "" },
+        { name: "titre", label: "Travaux / étude", value: r.titre || "", required: true },
+        { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
+        { name: "localisation_travaux", label: "Lieu / sous-zone", value: d.localisation || "" },
         { type: "select", name: "local_id", label: "Local", value: r.local_id, options: options("locaux", "General") },
-        { type: "select", name: "priorite", label: "Priorite", value: r.priorite, options: ["Faible", "Normale", "Urgente", "Critique"].map((x) => ({ value: x, label: x })) },
-        { type: "select", name: "statut", label: "Statut", value: r.statut, options: ["A faire", "Devis", "Programme", "En cours", "Realise", "Paye"].map((x) => ({ value: x, label: x })) },
-        { type: "textarea", name: "description", label: "Description", value: r.description || "" }
+        { type: "select", name: "priorite", label: "Priorité", value: r.priorite, options: [...new Set(["P1","P2","P3","P4","P5","P6",r.priorite])].filter(Boolean).map((x) => ({ value: x, label: ({P1:"P1 - Sécurité",P2:"P2 - Urgent",P3:"P3 - Important",P4:"P4 - Programmé",P5:"P5 - Pluriannuel",P6:"P6 - Long terme"})[x] || x })) },
+        { type: "select", name: "statut", label: "Avancement", value: r.statut, options: [...new Set([...travauxStatuses, r.statut])].filter(Boolean).map((x) => ({ value: x, label: x })) },
+        { name: "entreprise", label: "Entreprise / prestataire", value: r.entreprise || "" },
+        { type: "number", min: "0", step: "0.01", name: "montant_estime", label: "Estimation HT (€)", value: r.montant_estime || 0 },
+        { type: "number", min: "0", step: "0.01", name: "devis_ht_travaux", label: "Devis HT (€)", value: d.devis_ht ?? "" },
+        { type: "number", min: "0", step: "0.01", name: "montant_reel", label: "Réalisé HT (€)", value: r.montant_reel || 0 },
+        { type: "date", name: "date_prevue", label: "Date prévue (si connue)", value: r.date_prevue || "" },
+        { type: "date", name: "date_realisation", label: "Date de réception", value: r.date_realisation || "" },
+        { type: "textarea", name: "description", label: "Description", value: r.description || "" },
+        { type: "textarea", name: "note_matt_travaux", label: "Annotation Matthieu / arbitrage", value: d.note_matt || "" },
+        { type: "textarea", name: "notes_travaux", label: "Observations / décisions", value: d.notes || "" }
       ], "travaux"));
     },
     openRemuneration(id) {
@@ -1408,6 +1477,24 @@
     async save(table, form) {
       if (!ensureAdminAction()) return;
       const data = readForm(form);
+      if (table === "travaux") {
+        if (!form.reportValidity()) return;
+        const previous = state.data.travaux.find(t => t.id === data.id);
+        const details = travauxDetails(previous || {});
+        details.version_travaux = 1;
+        details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
+        details.localisation = data.localisation_travaux;
+        details.devis_ht = data.devis_ht_travaux === "" ? null : money(data.devis_ht_travaux);
+        details.note_matt = data.note_matt_travaux;
+        details.notes = data.notes_travaux;
+        data.observations = JSON.stringify(details);
+        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux"].forEach(k => delete data[k]);
+        data.local_id = data.local_id || null;
+        data.date_prevue = data.date_prevue || null;
+        data.date_realisation = data.date_realisation || null;
+        data.montant_estime = money(data.montant_estime);
+        data.montant_reel = money(data.montant_reel);
+      }
       if (table === "baux") {
         this.recalcBailForm(form);
         if (!form.reportValidity()) return;
