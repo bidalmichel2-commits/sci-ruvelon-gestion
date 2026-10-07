@@ -298,7 +298,7 @@ begin
     'A suivre'
   from public.baux b
   where b.statut = 'Actif'
-    and b.date_debut <= v_mois
+    and b.date_debut < (v_mois + interval '1 month')
     and (b.date_fin is null or b.date_fin >= v_mois)
   on conflict (mois, bail_id) do nothing;
 

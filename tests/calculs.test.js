@@ -47,6 +47,13 @@ function niveauAlerteBail(jours) {
   return null;
 }
 
+function bailActifDansMois({ dateDebut, dateFin, mois }) {
+  const [annee, numeroMois] = mois.split("-").map(Number);
+  const premierJour = `${mois}-01`;
+  const dernierJour = new Date(Date.UTC(annee, numeroMois, 0)).toISOString().slice(0, 10);
+  return dateDebut <= dernierJour && (!dateFin || dateFin >= premierJour);
+}
+
 function remunerationDetail({ encaissements, interventions, primes, primeResponsabilite = 0, autresFraisInclus = false }) {
   const encaissementsHt = money(encaissements.reduce((total, row) => total + money(row.encaissementHt), 0));
   const heures = money(interventions.reduce((total, row) => total + money(row.heures), 0));
@@ -112,6 +119,10 @@ assert.equal(niveauAlerteBail(92), "three");
 assert.equal(niveauAlerteBail(93), "six");
 assert.equal(niveauAlerteBail(183), "six");
 assert.equal(niveauAlerteBail(184), null);
+
+assert.equal(bailActifDansMois({ dateDebut: "2026-10-27", dateFin: "2027-11-12", mois: "2026-10" }), true);
+assert.equal(bailActifDansMois({ dateDebut: "2026-11-01", dateFin: "2027-11-12", mois: "2026-10" }), false);
+assert.equal(bailActifDansMois({ dateDebut: "2026-09-01", dateFin: "2026-09-30", mois: "2026-10" }), false);
 
 const detailMai = remunerationDetail({
   encaissements: [{ encaissementHt: 5278.01 }],

@@ -21,6 +21,10 @@
   const euro = (v) => `${(Number(v) || 0).toFixed(2)} EUR`;
   const today = () => new Date().toISOString().slice(0, 10);
   const monthDate = (m) => `${String(m || currentMonth()).slice(0, 7)}-01`;
+  const monthEndDate = (m) => {
+    const [year, month] = String(m || currentMonth()).slice(0, 7).split("-").map(Number);
+    return new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  };
   const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const uid = () => (crypto.randomUUID ? crypto.randomUUID() : `local-${Date.now()}-${Math.random().toString(16).slice(2)}`);
 
@@ -357,8 +361,14 @@
   }
 
   function activeBaux() {
-    const m = monthDate(state.month);
-    return state.data.baux.filter((b) => b.statut === "Actif" && !isSecondaryBail(b) && b.date_debut <= m && (!b.date_fin || b.date_fin >= m));
+    const firstDay = monthDate(state.month);
+    const lastDay = monthEndDate(state.month);
+    return state.data.baux.filter((b) =>
+      b.statut === "Actif" &&
+      !isSecondaryBail(b) &&
+      b.date_debut <= lastDay &&
+      (!b.date_fin || b.date_fin >= firstDay)
+    );
   }
 
   function isSecondaryBail(b) {
