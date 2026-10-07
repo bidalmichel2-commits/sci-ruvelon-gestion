@@ -190,7 +190,8 @@ def main(workbook_path):
         duration_years = max(1, int(number(row[4]) or 1))
         source_start, source_end = start, end
         start, end = current_dates(label, start, end, duration_years)
-        rent = number(row[8])
+        # La colonne source contient le loyer TTC hors charges.
+        rent = round(number(row[8]) / 1.20, 2)
         charges = number(row[7])
         deposit = number(row[9])
         normalized = normalize(label)
@@ -220,7 +221,7 @@ def main(workbook_path):
                 "date_fin": end or None,
                 "duree_mois": duration_years * 12,
                 "loyer_ht": 0 if secondary else rent,
-                "tva": 0,
+                "tva": 20,
                 "charges_mensuelles": 0 if secondary else charges,
                 "depot_garantie": 0 if secondary else deposit,
                 "renouvellement_auto": automatic,

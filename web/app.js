@@ -520,7 +520,7 @@
                   <div class="row-contact">${phoneHtml}</div></div>
                   <span class="chip ${leaseChipClass(b)}">${escapeHtml(b.statut)}</span>
                 </div>
-                <div class="chips"><span class="chip">HT ${euro(b.loyer_ht)}</span><span class="chip">Charges ${euro(b.charges_mensuelles)}</span>${isSecondaryBail(b) ? `<span class="chip">Local associe</span>` : ""}${b.renouvellement_auto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
+                <div class="chips"><span class="chip green">Total TTC ${euro(loyerFromBail(b.id).total_attendu)}</span><span class="chip">Loyer TTC ${euro(loyerFromBail(b.id).loyer_ttc)}</span><span class="chip">Charges ${euro(b.charges_mensuelles)}</span><span class="chip">HT ${euro(b.loyer_ht)}</span>${isSecondaryBail(b) ? `<span class="chip">Local associe</span>` : ""}${b.renouvellement_auto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
                 ${adminHtml(`<div class="actions"><button onclick="App.openBail('${b.id}')">Modifier</button></div>`)}
               </div>`;
           }).join("") : `<div class="empty">Aucun bail</div>`}</div>
@@ -551,6 +551,7 @@
       dateDebut: datesDebut[0] || "",
       dateFin: datesFin[datesFin.length - 1] || "",
       loyerHt: sum(amountRows, "loyer_ht"),
+      loyerTtc: round2(amountRows.reduce((total, b) => total + loyerFromBail(b.id).loyer_ttc, 0)),
       charges: sum(amountRows, "charges_mensuelles"),
       renouvellementAuto: rows.some((b) => b.renouvellement_auto)
     };
@@ -604,7 +605,7 @@
                   <td><strong>${escapeHtml(localLabel("locataires", l.id))}</strong><div class="table-sub">${escapeHtml(l.email || l.telephone || "")}</div></td>
                   <td>${s.locaux.length ? s.locaux.map((x) => `<span class="chip">${escapeHtml(x)}</span>`).join(" ") : `<span class="muted">Non associe</span>`}</td>
                   <td>${fmtDate(s.dateDebut) || "-"}</td><td>${fmtDate(s.dateFin) || "-"}${s.renouvellementAuto ? `<div class="table-sub">Renouvellement auto</div>` : ""}</td>
-                  <td class="num">${euro(s.loyerHt)}</td><td class="num">${euro(s.charges)}</td><td class="num"><strong>${euro(s.loyerHt + s.charges)}</strong></td>
+                  <td class="num">${euro(s.loyerHt)}</td><td class="num">${euro(s.charges)}</td><td class="num"><strong>${euro(s.loyerTtc + s.charges)}</strong></td>
                   <td>${adminHtml(`<button class="table-action" onclick="App.openLocataire('${l.id}')">Modifier</button>`)}</td>
                 </tr>`;
               }).join("")}</tbody>
@@ -613,7 +614,7 @@
           <div class="list mobile-list">${rows.length ? rows.map((l) => {
             const s = summaries.get(l.id);
             return `<div class="row">
-              <div class="row-main"><div><div class="row-title">${escapeHtml(localLabel("locataires", l.id))}</div><div class="row-sub">${s.locaux.length ? escapeHtml(s.locaux.join(" + ")) : "Aucun local associe"}</div></div><div class="row-amount">${euro(s.loyerHt + s.charges)}</div></div>
+              <div class="row-main"><div><div class="row-title">${escapeHtml(localLabel("locataires", l.id))}</div><div class="row-sub">${s.locaux.length ? escapeHtml(s.locaux.join(" + ")) : "Aucun local associe"}</div></div><div class="row-amount">${euro(s.loyerTtc + s.charges)}</div></div>
               <div class="chips"><span class="chip">HT ${euro(s.loyerHt)}</span><span class="chip">Charges ${euro(s.charges)}</span>${s.renouvellementAuto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
               <div class="row-sub">Bail : ${fmtDate(s.dateDebut) || "-"} au ${fmtDate(s.dateFin) || "-"}</div>
               ${adminHtml(`<div class="actions"><button onclick="App.openLocataire('${l.id}')">Modifier</button></div>`)}
@@ -914,6 +915,8 @@
     return [
       f.step ? `step="${escapeHtml(f.step)}"` : "",
       f.min !== undefined ? `min="${escapeHtml(f.min)}"` : "",
+      f.readonly ? "readonly" : "",
+      f.required ? "required" : "",
       f.onchange ? `onchange="${escapeHtml(f.onchange)}"` : "",
       f.oninput ? `oninput="${escapeHtml(f.oninput)}"` : ""
     ].filter(Boolean).join(" ");
@@ -1121,6 +1124,17 @@
       }
     },
     generateRents,
+    recalcBailForm(form) {
+      const total = Number(form.elements.total_ttc_charges.value) || 0;
+      const charges = Number(form.elements.charges_mensuelles.value) || 0;
+      form.elements.charges_mensuelles.setCustomValidity(charges > total ? "Les charges ne peuvent pas depasser le total TTC." : "");
+      const ttc = money(total - charges);
+      const ht = round2(ttc / 1.2);
+      form.elements.loyer_ttc_calcule.value = ttc.toFixed(2);
+      form.elements.loyer_ht.value = ht.toFixed(2);
+      form.elements.tva.value = 20;
+      form.elements.tva_montant_calcule.value = round2(ttc - ht).toFixed(2);
+    },
     openPasswordChange() {
       if (!sb) {
         toast("Changement possible uniquement avec la base en ligne.");
@@ -1289,7 +1303,8 @@
     },
     openBail(id) {
       if (!ensureAdminAction()) return;
-      const r = state.data.baux.find((x) => x.id === id) || { statut: "Actif", type_bail: "Commercial", tva: 0 };
+      const r = state.data.baux.find((x) => x.id === id) || { statut: "Actif", type_bail: "Commercial", tva: 20 };
+      const totalTtc = money(money(Number(r.loyer_ht || 0) * (1 + Number(r.tva || 0) / 100)) + Number(r.charges_mensuelles || 0));
       openModal("Bail", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
         { type: "select", name: "local_id", label: "Local", value: r.local_id, options: options("locaux", "Choisir") },
@@ -1297,15 +1312,19 @@
         { name: "type_bail", label: "Type bail", value: r.type_bail || "" },
         { type: "date", name: "date_debut", label: "Debut", value: r.date_debut || "" },
         { type: "date", name: "date_fin", label: "Fin", value: r.date_fin || "" },
-        { type: "number", step: "0.01", name: "loyer_ht", label: "Loyer HT", value: r.loyer_ht || 0 },
-        { type: "number", step: "0.01", name: "tva", label: "TVA %", value: r.tva || 0 },
-        { type: "number", step: "0.01", name: "charges_mensuelles", label: "Charges", value: r.charges_mensuelles || 0 },
+        { type: "number", step: "0.01", min: "0", required: true, name: "total_ttc_charges", label: "Total TTC charges comprises", value: totalTtc, oninput: "App.recalcBailForm(this.form)" },
+        { type: "number", step: "0.01", min: "0", required: true, name: "charges_mensuelles", label: "Charges TTC", value: r.charges_mensuelles || 0, oninput: "App.recalcBailForm(this.form)" },
+        { type: "number", step: "0.01", name: "loyer_ttc_calcule", label: "Loyer TTC hors charges", value: 0, readonly: true },
+        { type: "number", step: "0.01", name: "loyer_ht", label: "Loyer HT hors charges", value: 0, readonly: true },
+        { type: "number", name: "tva", label: "TVA (%)", value: 20, readonly: true },
+        { type: "number", step: "0.01", name: "tva_montant_calcule", label: "TVA sur le loyer", value: 0, readonly: true },
         { type: "number", step: "0.01", min: "0", name: "depot_garantie", label: "Depot de garantie", value: r.depot_garantie || 0 },
         { type: "checkbox", name: "renouvellement_auto", label: "Renouvellement automatique", value: r.renouvellement_auto },
         { type: "select", name: "statut", label: "Statut", value: r.statut, options: ["Actif", "En preparation", "Renouvele", "Resilie", "Archive"].map((x) => ({ value: x, label: x })) },
         { name: "document_url", label: "Lien du bail", value: r.document_url || "" },
         { type: "textarea", name: "observations", label: "Observations", value: r.observations || "" }
       ], "baux"));
+      this.recalcBailForm(document.getElementById("edit-form"));
     },
     openTravaux(id) {
       if (!ensureAdminAction()) return;
@@ -1389,6 +1408,16 @@
     async save(table, form) {
       if (!ensureAdminAction()) return;
       const data = readForm(form);
+      if (table === "baux") {
+        this.recalcBailForm(form);
+        if (!form.reportValidity()) return;
+        data.loyer_ht = round2((Number(data.total_ttc_charges) - Number(data.charges_mensuelles)) / 1.2);
+        data.charges_mensuelles = money(data.charges_mensuelles);
+        data.tva = 20;
+        delete data.total_ttc_charges;
+        delete data.loyer_ttc_calcule;
+        delete data.tva_montant_calcule;
+      }
       if (table === "locaux") {
         const tvaRate = Math.max(0, Number(data.tva_loyer) || 0);
         const ht = money(data.loyer_ht);
