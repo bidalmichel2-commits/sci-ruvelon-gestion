@@ -1,4 +1,4 @@
-const CACHE_NAME = "sci-ruvelon-gestion-3-v5";
+const CACHE_NAME = "sci-ruvelon-gestion-3-v6";
 const ASSETS = [
   "./",
   "./index.html",

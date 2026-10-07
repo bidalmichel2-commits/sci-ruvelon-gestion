@@ -456,7 +456,7 @@
 
   function renderPointage() {
     setTitle("Pointage MEG");
-    const rows = getMonthRows().sort((a, b) => localLabel("locataires", a.locataire_id).localeCompare(localLabel("locataires", b.locataire_id)));
+    const rows = getMonthRows().sort((a, b) => pointageLabel(a).localeCompare(pointageLabel(b)));
     return `
       <div class="desktop-wrap">
         <div class="toolbar">
@@ -471,8 +471,12 @@
     `;
   }
 
+  function pointageLabel(row) {
+    return localLabel("locataires", row.locataire_id) || row.observations || "Ligne manuelle";
+  }
+
   function renderLoyerRow(l) {
-    const locataire = localLabel("locataires", l.locataire_id) || "Locataire";
+    const locataire = pointageLabel(l);
     const local = localLabel("locaux", l.local_id);
     const paidFull = Number(l.total_paye || 0) >= Number(l.total_attendu || 0) && Number(l.total_attendu || 0) > 0;
     return `
