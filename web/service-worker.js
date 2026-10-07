@@ -1,4 +1,4 @@
-const CACHE_NAME = "sci-ruvelon-gestion-3-v8";
+const CACHE_NAME = "sci-ruvelon-gestion-3-v9";
 const ASSETS = [
   "./",
   "./index.html",
@@ -6,7 +6,10 @@ const ASSETS = [
   "./app.js?v=8",
   "./config.js",
   "./install-qr.png",
-  "./manifest.webmanifest"
+  "./icon-192.png",
+  "./icon-512.png",
+  "./apple-touch-icon.png",
+  "./manifest.webmanifest?v=9"
 ];
 
 self.addEventListener("install", (event) => {
