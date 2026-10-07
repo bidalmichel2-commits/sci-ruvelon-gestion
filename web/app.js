@@ -625,8 +625,31 @@
 
   function renderPlus() {
     setTitle("Plus");
+    const installUrl = `${location.origin}${location.pathname}`;
+    const qrUrl = "./install-qr.png";
     return `
       <div class="desktop-wrap grid">
+        <div class="panel install-panel">
+          <div class="panel-head"><h3>Installer sur téléphone</h3></div>
+          <div class="install-content">
+            <div class="install-qr-wrap">
+              <img class="install-qr" src="${escapeHtml(qrUrl)}" alt="QR code pour ouvrir SCI RUVELON GESTION sur téléphone" width="240" height="240">
+            </div>
+            <div class="install-copy">
+              <strong>Scannez ce QR code avec l'appareil photo du téléphone</strong>
+              <p>Ouvrez ensuite le lien et ajoutez l'application à l'écran d'accueil.</p>
+              <div class="install-steps">
+                <div><b>Android</b><span>Chrome → menu ⋮ → Installer l'application</span></div>
+                <div><b>iPhone</b><span>Safari → Partager → Sur l'écran d'accueil</span></div>
+              </div>
+              <a class="install-link" href="${escapeHtml(installUrl)}" target="_blank" rel="noopener">${escapeHtml(installUrl)}</a>
+              <div class="actions">
+                <button class="primary" onclick="App.installApp()">Installer</button>
+                <button class="secondary" onclick="App.copyInstallLink()">Copier le lien</button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="panel">
           <div class="panel-head"><h3>Compte</h3></div>
           <div class="notice info">${escapeHtml(state.user ? state.user.email : "")}</div>
@@ -1087,6 +1110,16 @@
     go(route) { state.route = route; render(); },
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
+    installApp() { $("#install-btn").click(); },
+    async copyInstallLink() {
+      const installUrl = `${location.origin}${location.pathname}`;
+      try {
+        await navigator.clipboard.writeText(installUrl);
+        toast("Lien copie.");
+      } catch (error) {
+        openModal("Lien de l'application", `<div class="notice info">${escapeHtml(installUrl)}</div>`);
+      }
+    },
     generateRents,
     openPasswordChange() {
       if (!sb) {

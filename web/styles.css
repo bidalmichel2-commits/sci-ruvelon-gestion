@@ -363,6 +363,47 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 
 .progress div { height: 100%; background: var(--green); border-radius: 999px; }
 
+.install-content {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  gap: 24px;
+  align-items: center;
+  padding: 22px;
+}
+
+.install-qr-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 264px;
+  background: #f6f8fb;
+  border: 1px solid #dfe8f1;
+  border-radius: 8px;
+}
+
+.install-qr {
+  display: block;
+  width: 240px;
+  max-width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  background: #fff;
+}
+
+.install-copy > strong { color: var(--blue); font-size: 18px; }
+.install-copy p { margin: 8px 0 16px; color: var(--muted); line-height: 1.5; }
+.install-steps { display: grid; gap: 8px; margin-bottom: 16px; }
+.install-steps div { display: grid; grid-template-columns: 72px 1fr; gap: 10px; align-items: baseline; }
+.install-steps b { color: var(--blue); }
+.install-steps span { color: #40566d; }
+.install-link {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 14px;
+  color: var(--blue-2);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
 .list { display: grid; gap: 8px; }
 
 .row {
@@ -622,6 +663,9 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
   .encaissement-line, .intervention-line, .prime-line { grid-template-columns: 1fr 1fr; }
   .detail-line .detail-note { grid-column: 1 / -1; }
   .recap-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .install-content { grid-template-columns: 1fr; gap: 16px; padding: 14px; }
+  .install-qr-wrap { min-height: 232px; }
+  .install-qr { width: 220px; }
   .sticky-actions { bottom: calc(-14px - env(safe-area-inset-bottom)); padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
   .toast { left: 12px; right: 12px; bottom: calc(88px + env(safe-area-inset-bottom)); min-width: 0; }
   .desktop-table { display: none; }
@@ -633,4 +677,5 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
   .toolbar { grid-template-columns: 1fr; }
   .encaissement-line, .intervention-line, .prime-line, .recap-grid { grid-template-columns: 1fr; }
   .detail-line .detail-note { grid-column: auto; }
+  .install-steps div { grid-template-columns: 1fr; gap: 2px; }
 }
