@@ -770,6 +770,7 @@
         if (parsed && Number(parsed.version) >= 1) {
           return {
             version: 1,
+            encaissements_source: parsed.encaissements_source || "manuel",
             encaissements: Array.isArray(parsed.encaissements) ? parsed.encaissements : [],
             interventions: Array.isArray(parsed.interventions) ? parsed.interventions : [],
             primes: Array.isArray(parsed.primes) ? parsed.primes : [],
@@ -800,6 +801,33 @@
       fraisKm: Number(row.frais_km) || round2((Number(row.km) || 0) * (Number(row.bareme_km) || 0.636)),
       total: Number(row.total_compte_courant) || 0
     };
+  }
+
+  function pointedReceipts(month) {
+    return state.data.loyers_mensuels.filter(r => String(r.mois).slice(0, 7) === String(month).slice(0, 7)).map(r => {
+      const expected = Math.max(0, Number(r.total_attendu) || 0);
+      const paid = Math.min(expected, Math.max(0, Number(r.total_paye) || 0));
+      const ht = Math.max(0, Number(r.loyer_ht) || 0);
+      return { local: localLabel("locaux", r.local_id), locataire: localLabel("locataires", r.locataire_id),
+        loyer_ht: ht, encaissement_ht: expected > 0 ? round2(ht * paid / expected) : 0,
+        observations: `Pointage : ${euro(paid)} / ${euro(expected)} TTC, charges comprises`, loyer_id: r.id };
+    });
+  }
+
+  async function syncPointedRemuneration() {
+    if (!state.isAdmin) return;
+    let changed = false;
+    for (const row of state.data.remuneration_gerant) {
+      const details = parseRemunerationDetails(row);
+      if (details.encaissements_source !== "pointage") continue;
+      const receipts = pointedReceipts(row.mois);
+      const ht = sum(receipts, "encaissement_ht");
+      if (ht === Number(row.encaissements_ht) && JSON.stringify(receipts) === JSON.stringify(details.encaissements)) continue;
+      details.encaissements = receipts;
+      await dbSave("remuneration_gerant", { ...row, encaissements_ht: ht, observations: JSON.stringify(details) });
+      changed = true;
+    }
+    if (changed) state.data.remuneration_gerant = await dbList("remuneration_gerant");
   }
 
   function isVisit(line) {
@@ -938,6 +966,7 @@
 
   async function refresh(message) {
     await loadAll();
+    await syncPointedRemuneration();
     render();
     if (message) toast(message);
   }
@@ -1062,7 +1091,8 @@
       <input type="hidden" name="id" value="${escapeHtml(r.id || "")}">
       <input type="hidden" name="bareme_km" value="${escapeHtml(r.bareme_km || 0.636)}">
       <div class="detail-month-head">
-        <label>Mois<input type="month" name="mois" value="${escapeHtml(String(r.mois || monthDate(state.month)).slice(0, 7))}" required></label>
+        <label>Mois<input type="month" name="mois" value="${escapeHtml(String(r.mois || monthDate(state.month)).slice(0, 7))}" required onchange="App.recalcRemunerationForm(this.form)"></label>
+        <label>Encaissements HT<select name="encaissements_source" onchange="App.recalcRemunerationForm(this.form)"><option value="pointage" ${!r.id || details.encaissements_source==="pointage"?"selected":""}>Automatique depuis le pointage</option><option value="manuel" ${r.id && details.encaissements_source!=="pointage"?"selected":""}>Saisie manuelle</option></select></label>
         <label>Prime responsabilite<input type="number" step="0.01" min="0" name="prime_responsabilite" value="${escapeHtml(r.prime_responsabilite || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
       </div>
 
@@ -1297,6 +1327,16 @@
     },
     recalcRemunerationForm(form) {
       if (!form) return;
+      const automatic = form.elements.encaissements_source.value === "pointage";
+      const receiptList = form.querySelector('[data-detail-list="encaissements"]');
+      if (automatic) {
+        const receipts = pointedReceipts(form.elements.mois.value);
+        receiptList.innerHTML = receipts.length ? receipts.map(r => remunerationLineHtml("encaissements", r)).join("") : '<div class="empty">Aucun pointage pour ce mois</div>';
+      }
+      if (!automatic && !receiptList.querySelector('[data-detail-kind="encaissements"]')) receiptList.innerHTML = remunerationLineHtml("encaissements", {});
+      receiptList.querySelectorAll('input').forEach(input => { input.readOnly = automatic; });
+      receiptList.querySelectorAll('.detail-remove').forEach(button => { button.hidden = automatic; });
+      receiptList.closest('section').querySelector('.detail-section-head button').hidden = automatic;
       const rate = Number(form.elements.bareme_km.value) || 0.636;
       form.querySelectorAll('[data-detail-kind="interventions"]').forEach(line => {
         const visit = isVisit({ activite: line.querySelector('[data-field="activite"]').value, motif_deplacement: line.querySelector('[data-field="motif_deplacement"]').value });
@@ -1496,6 +1536,7 @@
     },
     async saveRemuneration(form) {
       if (!ensureAdminAction()) return;
+      this.recalcRemunerationForm(form);
       const base = readForm(form);
       const totals = remunerationDetailTotals(form, true);
       const mois = monthDate(String(base.mois || "").slice(0, 7));
@@ -1503,6 +1544,7 @@
       const notes = String(base.detail_notes || "").trim();
       const details = {
         version: 1,
+        encaissements_source: base.encaissements_source,
         encaissements: totals.encaissements,
         interventions: totals.interventions,
         primes: totals.primes,

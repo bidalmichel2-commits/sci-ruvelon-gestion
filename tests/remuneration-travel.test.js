@@ -16,6 +16,7 @@ async function run(viewport) {
     await page.evaluate(() => App.go('remuneration'));
     await page.evaluate(() => App.openRemuneration());
     const form = page.locator('#edit-form');
+    await form.locator('[name="encaissements_source"]').selectOption('manuel');
     await form.locator('[data-field="encaissement_ht"]').fill('1000');
     const first = form.locator('[data-detail-kind="interventions"]').first();
     await first.locator('[data-field="activite"]').fill('Visite de locaux');

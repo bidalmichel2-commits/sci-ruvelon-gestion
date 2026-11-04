@@ -15,6 +15,7 @@ async function run(viewport) {
   await page.getByRole("button", { name: "Mode apercu local" }).click();
   await page.getByRole("button", { name: /Rémunération/ }).click();
   await page.getByRole("button", { name: "Saisir un mois" }).click();
+  await page.locator('[name="encaissements_source"]').selectOption('manuel');
 
   await page.locator('[data-detail-kind="encaissements"] [data-field="encaissement_ht"]').first().fill("1000");
   await page.locator('[data-detail-kind="interventions"] [data-field="heures"]').first().fill("2");
