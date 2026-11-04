@@ -1049,17 +1049,21 @@
     }
     if (kind === "interventions") {
       return `<div class="detail-line intervention-line" data-detail-kind="interventions">
-        ${removeButton}
+        <div class="intervention-head"><strong>Intervention</strong>${removeButton}</div>
+        <div class="intervention-fields">
         <label>Date<input type="date" data-field="date" value="${escapeHtml(String(r.date || "").slice(0, 10))}"></label>
+        <label>Temps passé (heures)<input type="number" step="0.25" min="0" data-field="heures" value="${escapeHtml(r.heures || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
         <label>Activité<input data-field="activite" value="${escapeHtml(r.activite || "")}" oninput="App.recalcRemunerationForm(this.form)"></label>
         <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
-        <label>Heures<input type="number" step="0.25" min="0" data-field="heures" value="${escapeHtml(r.heures || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        </div>
+        <fieldset class="intervention-travel"><legend>Déplacement</legend><div class="intervention-fields">
+        <label>Motif<select data-field="motif_deplacement" onchange="App.recalcRemunerationForm(this.form)"><option value="autre" ${r.motif_deplacement!=="visite"?"selected":""}>Autre intervention</option><option value="visite" ${r.motif_deplacement==="visite"?"selected":""}>Visite de local</option></select></label>
         <label>Km aller-retour<input type="number" step="0.1" min="0" data-field="km" value="${escapeHtml(r.km || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
-        <label>Motif du déplacement<select data-field="motif_deplacement" onchange="App.recalcRemunerationForm(this.form)"><option value="autre" ${r.motif_deplacement!=="visite"?"selected":""}>Autre intervention</option><option value="visite" ${r.motif_deplacement==="visite"?"selected":""}>Visite de local</option></select></label>
-        <label class="detail-note"><input type="checkbox" data-field="non_facturable" ${r.non_facturable?"checked":""} onchange="App.recalcRemunerationForm(this.form)"> Déplacement non facturable à la SCI</label>
-        <div class="detail-note">Frais SCI : <strong data-travel="sci"></strong> · À ma charge : <strong data-travel="perso"></strong></div>
-        <label>Autres frais<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
-        <label class="detail-note">Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label>
+        </div><label class="intervention-check"><input type="checkbox" data-field="non_facturable" ${r.non_facturable?"checked":""} onchange="App.recalcRemunerationForm(this.form)"><span>Déplacement non facturable à la SCI</span></label>
+        <div class="intervention-costs"><div><span>Facturable SCI</span><strong data-travel="sci"></strong></div><div><span>À ma charge</span><strong data-travel="perso"></strong></div></div>
+        </fieldset>
+        <div class="intervention-fields intervention-notes"><label>Autres frais (€)<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label></div>
       </div>`;
     }
     const situations = [
@@ -1339,6 +1343,7 @@
       receiptList.closest('section').querySelector('.detail-section-head button').hidden = automatic;
       const rate = Number(form.elements.bareme_km.value) || 0.636;
       form.querySelectorAll('[data-detail-kind="interventions"]').forEach(line => {
+        if (/visit/i.test(line.querySelector('[data-field="activite"]').value)) line.querySelector('[data-field="motif_deplacement"]').value = "visite";
         const visit = isVisit({ activite: line.querySelector('[data-field="activite"]').value, motif_deplacement: line.querySelector('[data-field="motif_deplacement"]').value });
         const checkbox = line.querySelector('[data-field="non_facturable"]');
         if (visit) checkbox.checked = true;

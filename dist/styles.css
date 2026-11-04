@@ -525,7 +525,20 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 .detail-list { display: grid; gap: 9px; }
 .detail-line { position: relative; display: grid; gap: 8px; padding: 12px 42px 12px 12px; border: 1px solid #dfe7ef; border-radius: 7px; background: #f8fafc; }
 .encaissement-line { grid-template-columns: .7fr 1.3fr 1fr 1fr 1.3fr; }
-.intervention-line { grid-template-columns: .9fr 1.7fr .7fr .65fr .8fr .8fr 1.2fr; }
+.detail-line.intervention-line { display: flex; flex-direction: column; gap: 16px; padding: 16px; background: #fff; }
+.intervention-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--blue); }
+.intervention-head .detail-remove { position: static; flex: 0 0 32px; width: 32px; height: 32px; border-radius: 6px; }
+.intervention-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
+.intervention-line .intervention-fields label { display: grid; gap: 6px; align-content: start; margin: 0; font-size: 13px; }
+.intervention-travel { min-width: 0; margin: 0; padding: 12px 0 0; border: 0; border-top: 1px solid var(--line); }
+.intervention-travel legend { padding: 0 8px 0 0; font-size: 13px; font-weight: 700; color: var(--blue); }
+.intervention-line .intervention-check { display: flex; align-items: center; gap: 10px; margin: 14px 0; font-size: 13px; line-height: 1.4; }
+.intervention-line .intervention-check input { flex: 0 0 20px; width: 20px; height: 20px; min-height: 20px; margin: 0; }
+.intervention-costs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; padding: 12px; background: #f1f6fa; border-left: 3px solid var(--blue); }
+.intervention-costs span { display: block; font-size: 12px; color: var(--muted); }
+.intervention-costs strong { display: block; margin-top: 4px; font-size: 16px; color: var(--blue); overflow-wrap: anywhere; }
+.intervention-costs > div:last-child strong { color: #955000; }
+.intervention-notes { padding-top: 14px; border-top: 1px solid var(--line); }
 .prime-line { grid-template-columns: .85fr .65fr .7fr 1fr 1.35fr .85fr 1.2fr; }
 .detail-line label { min-width: 0; font-size: 11px; }
 .detail-line input, .detail-line select { min-width: 0; width: 100%; }
@@ -685,6 +698,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 }
 
 @media (max-width: 430px) {
+  .intervention-line .intervention-fields { grid-template-columns: minmax(0,1fr); }
   .cards { grid-template-columns: 1fr; }
   .works-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .works-cards .card strong { font-size: 18px; }
