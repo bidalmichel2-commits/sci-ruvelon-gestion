@@ -515,6 +515,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 .data-table tfoot th { padding: 12px; background: #eef4fa; border-top: 2px solid #cfdeec; color: var(--blue); }
 .modal-card:has(.remuneration-form) { width: min(1120px, calc(100vw - 32px)); }
 .remuneration-form { display: grid; gap: 14px; }
+.monthly-receipt { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
+.monthly-receipt label { margin: 0; display: grid; gap: 6px; }
 .detail-month-head { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .detail-section { border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: #fff; }
 .detail-section-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
@@ -697,6 +699,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 }
 
 @media (max-width: 430px) {
+  .monthly-receipt { grid-template-columns: minmax(0,1fr); }
   .intervention-line .intervention-fields { grid-template-columns: minmax(0,1fr); }
   .cards { grid-template-columns: 1fr; }
   .works-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }

@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('playwright');
 const { spawn } = require('node:child_process');
+const path = require('node:path');
+const os = require('node:os');
 
 async function run(viewport) {
   const browser = await chromium.launch({ headless: true, executablePath: process.env.CHROME_PATH });
@@ -19,6 +21,11 @@ async function run(viewport) {
         { id: 'dec', mois: '2026-12-01', loyer_ht: 100, total_attendu: 120, total_paye: 120 }
       ]));
       localStorage.setItem('ruvelon_v3_remuneration_gerant', JSON.stringify([{ id: 'old-month', annee: 2026, mois: '2026-11-01', encaissements_ht: 50, observations: JSON.stringify({ version: 1, encaissements_source: 'manuel', encaissements: [{ loyer_ht: 50, encaissement_ht: 50 }] }) }]));
+      localStorage.setItem('ruvelon_v3_baux', JSON.stringify([
+        { id: 'usual', statut: 'Actif', date_debut: '2027-01-01', date_fin: '2027-12-31', loyer_ht: 600 },
+        { id: 'future', statut: 'Actif', date_debut: '2027-05-01', loyer_ht: 150 },
+        { id: 'secondary', statut: 'Actif', date_debut: '2027-01-01', loyer_ht: 600, observations: '[LOCAL_SECONDAIRE]' }
+      ]));
     });
     await page.reload({ waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Mode apercu local' }).click();
@@ -27,13 +34,20 @@ async function run(viewport) {
     const ht = () => form.locator('[data-recap="encaissements"]').innerText();
     assert.equal(await ht(), '1500.00 EUR');
     assert.equal(await form.locator('[name="encaissements_source"]').inputValue(), 'pointage');
-    assert.deepEqual(await form.locator('[data-field="loyer_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [1000,1000,0]);
-    assert.deepEqual(await form.locator('[data-field="encaissement_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [1000,500,0]);
-    assert.equal(await form.locator('[data-recap="factures_ht"]').innerText(), '2000.00 EUR');
+    assert.deepEqual(await form.locator('[data-field="loyer_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [3000]);
+    assert.deepEqual(await form.locator('[data-field="encaissement_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [1500]);
+    assert.equal(await form.locator('[data-recap="factures_ht"]').innerText(), '3000.00 EUR');
+    await form.locator('.monthly-receipt').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-totaux-${viewport.width}.png`) });
     assert.equal(await form.locator('[data-field="encaissement_ht"]').first().isEditable(), false);
     await form.locator('[name="mois"]').fill('2026-12');
     await form.locator('[name="mois"]').dispatchEvent('change');
     assert.equal(await ht(), '100.00 EUR');
+    await form.locator('[name="mois"]').fill('2027-01');
+    await form.locator('[name="mois"]').dispatchEvent('change');
+    assert.equal(await ht(), '600.00 EUR');
+    assert.equal(await form.locator('[data-field="loyer_ht"]').inputValue(), '600.00');
+    assert.match(await form.locator('[data-detail-list="encaissements"]').innerText(), /Sans pointage/);
     await form.locator('[name="mois"]').fill('2026-11');
     await form.locator('[name="mois"]').dispatchEvent('change');
     assert.equal(await ht(), '1500.00 EUR');
@@ -43,6 +57,7 @@ async function run(viewport) {
     let row = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_remuneration_gerant')).find(r => r.mois === '2026-11-01'));
     assert.equal(row.encaissements_ht, 1500);
     assert.equal(JSON.parse(row.observations).encaissements_source, 'pointage');
+    assert.equal(JSON.parse(row.observations).encaissements.length, 1);
     await page.evaluate(() => App.toggleLoyer('partial', 'paiement_controle'));
     row = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_remuneration_gerant')).find(r => r.mois === '2026-11-01'));
     assert.equal(row.encaissements_ht, 2000);

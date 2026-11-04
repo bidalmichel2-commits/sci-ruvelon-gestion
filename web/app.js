@@ -805,22 +805,28 @@
     };
   }
 
-  function pointedReceipts(month) {
-    return state.data.loyers_mensuels.filter(r => String(r.mois).slice(0, 7) === String(month).slice(0, 7)).map(r => {
+  function pointedReceipts(month, previous = {}) {
+    const rows = state.data.loyers_mensuels.filter(r => String(r.mois).slice(0, 7) === String(month).slice(0, 7));
+    if (!rows.length) {
+      const sameMonth = String(previous.mois).slice(0, 7) === String(month).slice(0, 7);
+      const savedHabitual = sameMonth ? sum(parseRemunerationDetails(previous).encaissements, "loyer_ht") || Number(previous.encaissements_ht) || 0 : 0;
+      const leases = state.data.baux.filter(b => b.statut === "Actif" && !isSecondaryBail(b) && b.date_debut <= monthEndDate(month) && (!b.date_fin || b.date_fin >= monthDate(month)));
+      const habitual = money(savedHabitual || sum(leases, "loyer_ht"));
+      return [{ locataire: "Total du mois", loyer_ht: habitual, encaissement_ht: habitual, observations: "Sans pointage : encaissement supposé égal au loyer HT habituel." }];
+    }
+    const paidHt = round2(rows.reduce((total, r) => {
       const expected = Math.max(0, Number(r.total_attendu) || 0);
       const paid = Math.min(expected, Math.max(0, Number(r.total_paye) || 0));
       const ht = Math.max(0, Number(r.loyer_ht) || 0);
-      return { local: localLabel("locaux", r.local_id), locataire: localLabel("locataires", r.locataire_id),
-        loyer_ht: r.facture_meg_faite ? ht : 0, encaissement_ht: expected > 0 ? round2(ht * paid / expected) : 0,
-        observations: `MEG : ${r.facture_meg_faite ? "facture réalisée" : "facture à faire"}. Paiement : ${euro(paid)} / ${euro(expected)} TTC, charges comprises`, loyer_id: r.id };
-    });
+      return total + (expected > 0 ? round2(ht * paid / expected) : 0);
+    }, 0));
+    return [{ locataire: "Total du mois", loyer_ht: sum(rows, "loyer_ht"), encaissement_ht: paidHt, observations: "Totaux du pointage mensuel, hors TVA et charges." }];
   }
 
   function remunerationReceiptSource(row) {
     const details = parseRemunerationDetails(row);
     if (details.encaissements_source === "manuel" && details.encaissements_manuel_volontaire) return "manuel";
-    if (state.data.loyers_mensuels.some(r => String(r.mois).slice(0, 7) === String(row.mois).slice(0, 7))) return "pointage";
-    return details.encaissements_source || (row.id ? "manuel" : "pointage");
+    return "pointage";
   }
 
   async function syncPointedRemuneration() {
@@ -829,7 +835,7 @@
     for (const row of state.data.remuneration_gerant) {
       const details = parseRemunerationDetails(row);
       if (details.encaissements_source !== "pointage") continue;
-      const receipts = pointedReceipts(row.mois);
+      const receipts = pointedReceipts(row.mois, row);
       const ht = sum(receipts, "encaissement_ht");
       if (ht === Number(row.encaissements_ht) && JSON.stringify(receipts) === JSON.stringify(details.encaissements)) continue;
       details.encaissements = receipts;
@@ -1127,7 +1133,7 @@
         <div class="detail-section-head"><div><span>4</span><h4>Recapitulatif automatique</h4></div></div>
         <div class="recap-grid">
           <div><small>Encaissements HT</small><strong data-recap="encaissements">0.00 EUR</strong></div>
-          <div><small>Loyers HT facturés MEG</small><strong data-recap="factures_ht">0.00 EUR</strong></div>
+          <div><small>Total loyers HT du mois</small><strong data-recap="factures_ht">0.00 EUR</strong></div>
           <div><small>Brute 7%</small><strong data-recap="brute">0.00 EUR</strong></div>
           <div><small>Nette apres abattement</small><strong data-recap="nette">0.00 EUR</strong></div>
           <div><small>Heures</small><strong data-recap="heures">0.00</strong></div>
@@ -1344,8 +1350,9 @@
       const automatic = form.elements.encaissements_source.value === "pointage";
       const receiptList = form.querySelector('[data-detail-list="encaissements"]');
       if (automatic) {
-        const receipts = pointedReceipts(form.elements.mois.value);
-        receiptList.innerHTML = receipts.length ? receipts.map(r => remunerationLineHtml("encaissements", r)).join("") : '<div class="empty">Aucun pointage pour ce mois</div>';
+        const previous = state.data.remuneration_gerant.find(r => r.id === form.elements.id.value) || {};
+        const [receipt] = pointedReceipts(form.elements.mois.value, previous);
+        receiptList.innerHTML = `<div class="monthly-receipt" data-detail-kind="encaissements"><label>Total loyers HT du mois<input type="number" step="0.01" data-field="loyer_ht" value="${receipt.loyer_ht.toFixed(2)}" readonly></label><label>Total encaissé HT du mois<input type="number" step="0.01" data-field="encaissement_ht" value="${receipt.encaissement_ht.toFixed(2)}" readonly></label><input type="hidden" data-field="observations" value="${escapeHtml(receipt.observations)}"></div><div class="table-sub">${escapeHtml(receipt.observations)}</div>`;
       }
       if (!automatic && !receiptList.querySelector('[data-detail-kind="encaissements"]')) receiptList.innerHTML = remunerationLineHtml("encaissements", {});
       receiptList.querySelectorAll('input').forEach(input => { input.readOnly = automatic; });
@@ -1536,6 +1543,8 @@
       if (!ensureAdminAction()) return;
       try { state.data.loyers_mensuels = await dbList("loyers_mensuels"); }
       catch (error) { toast(error.message || "Impossible de charger le pointage du mois"); return; }
+      try { state.data.baux = await dbList("baux"); }
+      catch (error) { toast(error.message || "Impossible de charger les loyers habituels"); return; }
       const requestedMonth = `${state.year}-${state.month.slice(5, 7)}-01`;
       const r = state.data.remuneration_gerant.find((x) => x.id === id)
         || state.data.remuneration_gerant.find((x) => x.mois === requestedMonth)
