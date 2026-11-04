@@ -20,6 +20,7 @@ async function run(viewport) {
   await page.locator('[data-detail-kind="encaissements"] [data-field="encaissement_ht"]').first().fill("1000");
   await page.locator('[data-detail-kind="interventions"] [data-field="heures"]').first().fill("2");
   await page.locator('[data-detail-kind="interventions"] [data-field="km"]').first().fill("10");
+  await page.locator('[data-detail-kind="interventions"] .intervention-extra summary').first().click();
   await page.locator('[data-detail-kind="interventions"] [data-field="autres_frais"]').first().fill("25");
   await page.locator('[data-detail-kind="primes"] [data-field="loyer_reference"]').first().fill("400");
 

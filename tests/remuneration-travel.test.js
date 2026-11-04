@@ -19,13 +19,13 @@ async function run(viewport) {
     await form.locator('[name="encaissements_source"]').selectOption('manuel');
     await form.locator('[data-field="encaissement_ht"]').fill('1000');
     const first = form.locator('[data-detail-kind="interventions"]').first();
-    await first.locator('[data-field="activite"]').fill('Visite de locaux');
+    await first.locator('[data-field="activite"]').selectOption('Visite de local');
     await first.locator('[data-field="km"]').fill('40');
     assert.equal(await first.locator('[data-field="non_facturable"]').isChecked(), true);
     assert.equal(await first.locator('[data-field="non_facturable"]').isDisabled(), true);
     await page.evaluate(() => App.addRemunerationLine('interventions', document.getElementById('edit-form')));
     const second = form.locator('[data-detail-kind="interventions"]').nth(1);
-    await second.locator('[data-field="activite"]').fill('Suivi chantier');
+    await second.locator('[data-field="activite"]').selectOption('Gestion entreprise travaux');
     await second.locator('[data-field="km"]').fill('20');
     const recap = name => form.locator(`[data-recap="${name}"]`).innerText();
     assert.equal(await recap('frais_km'), '12.72 EUR');
@@ -41,6 +41,8 @@ async function run(viewport) {
     await second.locator('[data-field="motif_deplacement"]').selectOption('autre');
     assert.equal(await recap('frais_km'), '12.72 EUR');
     assert.equal(await page.locator('#modal-body').evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
+    const positions = await first.locator('.intervention-inline input:not([type="checkbox"]), .intervention-inline select').evaluateAll(els => els.map(e => Math.round(e.getBoundingClientRect().bottom)));
+    assert.equal(new Set(positions).size, 1, 'Tous les champs doivent etre alignes sur une ligne');
     await form.getByRole('button', { name: 'Enregistrer le mois' }).click();
     await page.waitForFunction(() => document.getElementById('modal').hidden);
     const row = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_remuneration_gerant'))[0]);
@@ -55,6 +57,7 @@ async function run(viewport) {
     assert.equal(await recap('frais_km'), '12.72 EUR');
     assert.equal(await recap('frais_perso'), '25.44 EUR');
     await first.scrollIntoViewIfNeeded();
+    await page.locator('[data-detail-list="interventions"]').evaluate(e => e.scrollLeft = 0);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-deplacements-${viewport.width}.png`) });
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }

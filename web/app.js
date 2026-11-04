@@ -1048,22 +1048,19 @@
       </div>`;
     }
     if (kind === "interventions") {
+      const activities = [...new Set(["Comptabilité", "Gestion locataire", "Gestion entreprise travaux", "Facturation loyers", "Rédaction baux", "Rédaction reçu", "Gestion divers", "Intervention travaux", "Visite de local", r.activite].filter(Boolean))];
       return `<div class="detail-line intervention-line" data-detail-kind="interventions">
-        <div class="intervention-head"><strong>Intervention</strong>${removeButton}</div>
-        <div class="intervention-fields">
+        <div class="intervention-fields intervention-inline">
         <label>Date<input type="date" data-field="date" value="${escapeHtml(String(r.date || "").slice(0, 10))}"></label>
         <label>Temps passé (heures)<input type="number" step="0.25" min="0" data-field="heures" value="${escapeHtml(r.heures || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
-        <label>Activité<input data-field="activite" value="${escapeHtml(r.activite || "")}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Activité<select data-field="activite" onchange="App.recalcRemunerationForm(this.form)"><option value="">Choisir</option>${activities.map(a=>`<option value="${escapeHtml(a)}" ${a===r.activite?"selected":""}>${escapeHtml(a)}</option>`).join("")}</select></label>
         <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
-        </div>
-        <fieldset class="intervention-travel"><legend>Déplacement</legend><div class="intervention-fields">
         <label>Motif<select data-field="motif_deplacement" onchange="App.recalcRemunerationForm(this.form)"><option value="autre" ${r.motif_deplacement!=="visite"?"selected":""}>Autre intervention</option><option value="visite" ${r.motif_deplacement==="visite"?"selected":""}>Visite de local</option></select></label>
         <label>Km aller-retour<input type="number" step="0.1" min="0" data-field="km" value="${escapeHtml(r.km || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
-        </div><label class="intervention-check"><input type="checkbox" data-field="non_facturable" ${r.non_facturable?"checked":""} onchange="App.recalcRemunerationForm(this.form)"><span>Déplacement non facturable à la SCI</span></label>
-        <div class="intervention-costs"><div><span>Facturable SCI</span><strong data-travel="sci"></strong></div><div><span>À ma charge</span><strong data-travel="perso"></strong></div></div>
-        </fieldset>
-        <div class="intervention-fields intervention-notes"><label>Autres frais (€)<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
-        <label>Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label></div>
+        <label class="intervention-billing">Non facturable SCI<span class="intervention-check"><input type="checkbox" data-field="non_facturable" ${r.non_facturable?"checked":""} onchange="App.recalcRemunerationForm(this.form)"></span></label>${removeButton}
+        </div>
+        <details class="intervention-extra" ${r.autres_frais || r.observations?"open":""}><summary>Frais et observation · SCI <strong data-travel="sci"></strong> · À ma charge <strong data-travel="perso"></strong></summary>
+        <div class="intervention-fields intervention-notes"><label>Autres frais (€)<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label><label>Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label></div></details>
       </div>`;
     }
     const situations = [
