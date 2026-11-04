@@ -802,6 +802,22 @@
     };
   }
 
+  function isVisit(line) {
+    return line.motif_deplacement === "visite" || /visit/i.test(String(line.activite || ""));
+  }
+
+  function travelTotals(interventions, rate) {
+    const kmTotal = round2(interventions.reduce((s, l) => s + numberValue(l.km), 0));
+    const km = round2(interventions.filter(l => !isVisit(l) && !l.non_facturable).reduce((s, l) => s + numberValue(l.km), 0));
+    const kmPerso = round2(kmTotal - km);
+    return { km, kmTotal, kmPerso, fraisKm: round2(km * rate), fraisPerso: round2(kmPerso * rate), coutDeplacements: round2(kmTotal * rate) };
+  }
+
+  function savedTravel(row) {
+    const saved = parseRemunerationDetails(row).interventions.map(l => ({ ...l, activite: "", motif_deplacement: "", non_facturable: l.non_facturable === true || l.motif_deplacement === "visite" }));
+    return travelTotals(saved, Number(row.bareme_km) || 0.636);
+  }
+
   function renderRemuneration() {
     const rows = state.data.remuneration_gerant.filter((r) => String(r.annee) === String(state.year)).sort((a, b) => String(a.mois).localeCompare(String(b.mois)));
     const total = sum(rows, "total_compte_courant");
@@ -811,6 +827,7 @@
     const fraisKm = sum(rows, "frais_km");
     const heures = sum(rows, "heures");
     const autres = sum(rows, "autres_frais");
+    const perso = round2(rows.reduce((s, r) => s + savedTravel(r).fraisPerso, 0));
     return `
       <div class="panel">
         <div class="panel-head"><h3>Suivi remuneration gerant</h3>${adminHtml(`<button class="primary" onclick="App.openRemuneration()">Saisir un mois</button>`)}</div>
@@ -820,6 +837,7 @@
           <div class="card"><small>Remuneration nette</small><strong>${euro(net)}</strong></div>
           <div class="card"><small>Primes</small><strong>${euro(primes)}</strong></div>
           <div class="card"><small>Frais km</small><strong>${euro(fraisKm)}</strong></div>
+          <div class="card orange"><small>Déplacements à ma charge</small><strong>${euro(perso)}</strong></div>
           <div class="card"><small>Heures</small><strong>${heures.toFixed(2)}</strong></div>
           <div class="card green"><small>Compte courant</small><strong>${euro(total)}</strong></div>
         </div>
@@ -835,7 +853,7 @@
                 <td class="num">${euro(values.brut)}</td>
                 <td class="num">${euro(values.net)}</td>
                 <td class="num">${euro(values.primes)}</td>
-                <td class="num">${euro(values.fraisKm)}</td>
+                <td class="num">${euro(values.fraisKm)}<div class="table-sub">À ma charge : ${euro(savedTravel(r).fraisPerso)}</div></td>
                 <td class="num">${euro(r.autres_frais)}<div class="table-sub">${r.autres_frais_inclus_total ? "inclus" : "hors total"}</div></td>
                 <td class="num"><strong>${euro(values.total)}</strong></td>
                 <td class="num">${Number(r.heures || 0).toFixed(2)}</td>
@@ -850,6 +868,7 @@
           return `<div class="row">
             <div class="row-main"><div><div class="row-title">${escapeHtml(monthLabel(r.mois))}</div><div class="row-sub">HT ${euro(r.encaissements_ht)} - ${Number(r.heures || 0).toFixed(2)} h</div></div><div class="row-amount">${euro(values.total)}</div></div>
             <div class="chips"><span class="chip">Nette ${euro(values.net)}</span><span class="chip">Primes ${euro(values.primes)}</span><span class="chip">Km ${Number(r.km) || 0}</span><span class="chip ${r.autres_frais_inclus_total ? "orange" : ""}">Autres ${euro(r.autres_frais)}</span></div>
+            <div class="row-sub">Déplacements à ma charge : ${euro(savedTravel(r).fraisPerso)}</div>
             ${adminHtml(`<div class="actions"><button onclick="App.openRemuneration('${r.id}')">Ouvrir le detail</button></div>`)}
           </div>`;
         }).join("") : `<div class="empty">Aucune ligne pour ${state.year}</div>`}</div>
@@ -1003,10 +1022,13 @@
       return `<div class="detail-line intervention-line" data-detail-kind="interventions">
         ${removeButton}
         <label>Date<input type="date" data-field="date" value="${escapeHtml(String(r.date || "").slice(0, 10))}"></label>
-        <label>Activite<input data-field="activite" value="${escapeHtml(r.activite || "")}"></label>
+        <label>Activité<input data-field="activite" value="${escapeHtml(r.activite || "")}" oninput="App.recalcRemunerationForm(this.form)"></label>
         <label>Local<input data-field="local" value="${escapeHtml(r.local || "")}"></label>
         <label>Heures<input type="number" step="0.25" min="0" data-field="heures" value="${escapeHtml(r.heures || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
         <label>Km aller-retour<input type="number" step="0.1" min="0" data-field="km" value="${escapeHtml(r.km || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
+        <label>Motif du déplacement<select data-field="motif_deplacement" onchange="App.recalcRemunerationForm(this.form)"><option value="autre" ${r.motif_deplacement!=="visite"?"selected":""}>Autre intervention</option><option value="visite" ${r.motif_deplacement==="visite"?"selected":""}>Visite de local</option></select></label>
+        <label class="detail-note"><input type="checkbox" data-field="non_facturable" ${r.non_facturable?"checked":""} onchange="App.recalcRemunerationForm(this.form)"> Déplacement non facturable à la SCI</label>
+        <div class="detail-note">Frais SCI : <strong data-travel="sci"></strong> · À ma charge : <strong data-travel="perso"></strong></div>
         <label>Autres frais<input type="number" step="0.01" min="0" data-field="autres_frais" value="${escapeHtml(r.autres_frais || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
         <label class="detail-note">Observation<input data-field="observations" value="${escapeHtml(r.observations || "")}"></label>
       </div>`;
@@ -1067,6 +1089,10 @@
           <div><small>Nette apres abattement</small><strong data-recap="nette">0.00 EUR</strong></div>
           <div><small>Heures</small><strong data-recap="heures">0.00</strong></div>
           <div><small>Frais km</small><strong data-recap="frais_km">0.00 EUR</strong></div>
+          <div><small>Km aller-retour totaux</small><strong data-recap="km_total">0</strong></div>
+          <div><small>Km facturables SCI</small><strong data-recap="km_sci">0</strong></div>
+          <div><small>Déplacements à ma charge</small><strong data-recap="frais_perso">0.00 EUR</strong></div>
+          <div><small>Coût total déplacements (barème)</small><strong data-recap="cout_deplacements">0.00 EUR</strong></div>
           <div><small>Primes</small><strong data-recap="primes">0.00 EUR</strong></div>
           <div><small>Autres frais</small><strong data-recap="autres">0.00 EUR</strong></div>
           <div class="recap-total"><small>Compte courant du mois</small><strong data-recap="total">0.00 EUR</strong></div>
@@ -1090,10 +1116,10 @@
     return [...form.querySelectorAll(`[data-detail-kind="${kind}"]`)].map((line) => {
       const result = {};
       line.querySelectorAll("[data-field]").forEach((field) => {
-        result[field.dataset.field] = field.type === "number" ? numberValue(field.value) : String(field.value || "").trim();
+        result[field.dataset.field] = field.type === "checkbox" ? field.checked : field.type === "number" ? numberValue(field.value) : String(field.value || "").trim();
       });
       return result;
-    }).filter((row) => Object.values(row).some((value) => typeof value === "number" ? value !== 0 : value !== ""));
+    }).filter((row) => Object.entries(row).some(([key, value]) => !["non_facturable", "motif_deplacement"].includes(key) && (typeof value === "number" ? value !== 0 : value !== "")));
   }
 
   function numberValue(value) {
@@ -1119,14 +1145,14 @@
     }).filter((row) => row.date || row.local || row.loyer_reference || row.prime || row.observations || (row.type && row.type !== "Entree"));
     const encaissementsHt = round2(encaissements.reduce((total, line) => total + numberValue(line.encaissement_ht), 0));
     const heures = round2(interventions.reduce((total, line) => total + numberValue(line.heures), 0));
-    const km = round2(interventions.reduce((total, line) => total + numberValue(line.km), 0));
     const autresFrais = round2(interventions.reduce((total, line) => total + numberValue(line.autres_frais), 0));
     const primeEdl = round2(primes.reduce((total, line) => total + numberValue(line.prime), 0));
     const primeResponsabilite = numberValue(form.elements.prime_responsabilite.value);
     const baremeKm = Number(form.elements.bareme_km.value) || 0.636;
+    const travel = travelTotals(interventions, baremeKm);
+    const { km, fraisKm } = travel;
     const brute = round2(encaissementsHt * 0.07);
     const nette = round2(brute * 0.70);
-    const fraisKm = round2(km * baremeKm);
     const total = round2(
       encaissementsHt * 0.07 * 0.70 +
       km * baremeKm +
@@ -1134,7 +1160,7 @@
       primeResponsabilite +
       (form.elements.autres_frais_inclus_total.checked ? autresFrais : 0)
     );
-    return { encaissements, interventions, primes, encaissementsHt, heures, km, autresFrais, primeEdl, primeResponsabilite, baremeKm, brute, nette, fraisKm, total };
+    return { encaissements, interventions, primes, encaissementsHt, heures, ...travel, autresFrais, primeEdl, primeResponsabilite, baremeKm, brute, nette, total };
   }
 
   function readForm(form) {
@@ -1271,6 +1297,17 @@
     },
     recalcRemunerationForm(form) {
       if (!form) return;
+      const rate = Number(form.elements.bareme_km.value) || 0.636;
+      form.querySelectorAll('[data-detail-kind="interventions"]').forEach(line => {
+        const visit = isVisit({ activite: line.querySelector('[data-field="activite"]').value, motif_deplacement: line.querySelector('[data-field="motif_deplacement"]').value });
+        const checkbox = line.querySelector('[data-field="non_facturable"]');
+        if (visit) checkbox.checked = true;
+        else if (checkbox.disabled) checkbox.checked = false;
+        checkbox.disabled = visit;
+        const cost = round2(numberValue(line.querySelector('[data-field="km"]').value) * rate);
+        line.querySelector('[data-travel="sci"]').textContent = euro(checkbox.checked ? 0 : cost);
+        line.querySelector('[data-travel="perso"]').textContent = euro(checkbox.checked ? cost : 0);
+      });
       const totals = remunerationDetailTotals(form, true);
       const values = {
         encaissements: euro(totals.encaissementsHt),
@@ -1278,6 +1315,10 @@
         nette: euro(totals.nette),
         heures: totals.heures.toFixed(2),
         frais_km: euro(totals.fraisKm),
+        km_total: totals.kmTotal.toFixed(1),
+        km_sci: totals.km.toFixed(1),
+        frais_perso: euro(totals.fraisPerso),
+        cout_deplacements: euro(totals.coutDeplacements),
         primes: euro(totals.primeEdl + totals.primeResponsabilite),
         autres: euro(totals.autresFrais),
         total: euro(totals.total)
