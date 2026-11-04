@@ -12,6 +12,7 @@
     travauxYear: "",
     travauxStatus: "",
     travauxSearch: "",
+    travauxOrigin: "",
     user: null,
     profile: null,
     isAdmin: false,
@@ -149,6 +150,7 @@
 
   function stripGenerated(table, row) {
     const r = { ...row };
+    if (!r.id) delete r.id;
     delete r.created_at;
     delete r.updated_at;
     if (table === "loyers_mensuels") delete r.solde;
@@ -678,6 +680,7 @@
     const query = state.travauxSearch.toLocaleLowerCase("fr");
     const rows = all.filter(t => (!state.travauxYear || String(t.detail.annee || "Non programme") === state.travauxYear) &&
       (!state.travauxStatus || t.statut === state.travauxStatus) &&
+      (!state.travauxOrigin || travauxOrigin(t) === state.travauxOrigin) &&
       (!query || [t.titre, t.description, t.entreprise, t.detail.localisation, t.detail.notes].join(" ").toLocaleLowerCase("fr").includes(query)))
       .sort((a, b) => String(a.detail.annee || 9999).localeCompare(String(b.detail.annee || 9999)) || String(a.priorite).localeCompare(String(b.priorite)));
     const closed = t => /Soldé|Payé|Paye|Abandonn|Realise|Réceptionné/.test(t.statut);
@@ -709,6 +712,7 @@
       <div class="panel works-panel">
         <div class="panel-head"><h3>${rows.length} travaux / études</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
         <div class="toolbar works-filters">
+          <select aria-label="Origine des travaux" onchange="App.filterTravaux('travauxOrigin',this.value)"><option value="">Toutes les origines</option><option value="base" ${state.travauxOrigin==="base"?"selected":""}>Base Matthieu</option><option value="nouveau" ${state.travauxOrigin==="nouveau"?"selected":""}>Nouveaux / imprévus</option></select>
           <input type="search" aria-label="Rechercher des travaux" placeholder="Rechercher travaux, lieu, entreprise" value="${escapeHtml(state.travauxSearch)}" onchange="App.filterTravaux('travauxSearch',this.value)">
           <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
           <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
@@ -728,10 +732,16 @@
     return { annee: row.date_prevue ? Number(row.date_prevue.slice(0,4)) : null, localisation: "", notes: row.observations || "", devis_ht: null };
   }
 
+  function travauxOrigin(row) {
+    const d = row.detail || travauxDetails(row);
+    return d.origine || (String(d.source_key || "").startsWith("ruvelon_travaux_v2_") ? "base" : "nouveau");
+  }
+
   function travauxNotesHtml(t) {
     const d = t.detail || travauxDetails(t);
     const ppi = Object.entries(d.ppi || {}).filter(([,value])=>Number(value)).map(([year,value])=>`${year} : ${euro(value)} HT`).join(" / ");
-    return `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}${d.etude?`<p><b>Étude associée :</b> ${escapeHtml(d.etude.filter(v=>v!==null).join(" · "))}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
+    const originBadge = `<div class="chips"><span class="chip ${travauxOrigin(t)==="base"?"":"orange"}">${travauxOrigin(t)==="base"?"Base Matthieu":"Nouveau / imprévu"}</span>${!d.annee && !t.date_prevue?'<span class="chip">Date à définir</span>':""}</div>`;
+    return originBadge + `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}${d.etude?`<p><b>Étude associée :</b> ${escapeHtml(d.etude.filter(v=>v!==null).join(" · "))}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
   }
 
   function renderRemunerationScreen() {
@@ -1168,7 +1178,7 @@
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
     filterTravaux(field, value) {
-      if (!["travauxYear", "travauxStatus", "travauxSearch"].includes(field)) return;
+      if (!["travauxYear", "travauxStatus", "travauxSearch", "travauxOrigin"].includes(field)) return;
       state[field] = value;
       render();
     },
@@ -1394,6 +1404,10 @@
       ], "baux"));
       this.recalcBailForm(document.getElementById("edit-form"));
     },
+    setTravauxPlanning(form) {
+      const unknown = form.elements.planification_travaux.value === "indefini";
+      ["annee_cible", "date_prevue"].forEach(name => { form.elements[name].disabled = unknown; });
+    },
     openTravaux(id) {
       if (!ensureAdminAction()) return;
       const r = state.data.travaux.find((x) => x.id === id) || { statut: travauxStatuses[0], priorite: "P4" };
@@ -1401,6 +1415,8 @@
       openModal("Travaux", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
         { name: "titre", label: "Travaux / étude", value: r.titre || "", required: true },
+        { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: [{ value: "nouveau", label: "Nouveau / imprévu" }, { value: "base", label: "Base Matthieu" }] },
+        { type: "select", name: "planification_travaux", label: "Planification", value: d.annee || r.date_prevue ? "planifie" : "indefini", options: [{ value: "indefini", label: "À définir" }, { value: "planifie", label: "Planifié" }], onchange: "App.setTravauxPlanning(this.form)" },
         { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
         { name: "localisation_travaux", label: "Lieu / sous-zone", value: d.localisation || "" },
         { type: "select", name: "local_id", label: "Local", value: r.local_id, options: options("locaux", "General") },
@@ -1416,6 +1432,7 @@
         { type: "textarea", name: "note_matt_travaux", label: "Annotation Matthieu / arbitrage", value: d.note_matt || "" },
         { type: "textarea", name: "notes_travaux", label: "Observations / décisions", value: d.notes || "" }
       ], "travaux"));
+      this.setTravauxPlanning(document.getElementById("edit-form"));
     },
     openRemuneration(id) {
       if (!ensureAdminAction()) return;
@@ -1492,13 +1509,15 @@
         const previous = state.data.travaux.find(t => t.id === data.id);
         const details = travauxDetails(previous || {});
         details.version_travaux = 1;
+        details.origine = data.origine_travaux === "base" ? "base" : "nouveau";
+        if (data.planification_travaux === "indefini") { data.annee_cible = ""; data.date_prevue = null; }
         details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
         details.localisation = data.localisation_travaux;
         details.devis_ht = data.devis_ht_travaux === "" ? null : money(data.devis_ht_travaux);
         details.note_matt = data.note_matt_travaux;
         details.notes = data.notes_travaux;
         data.observations = JSON.stringify(details);
-        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux"].forEach(k => delete data[k]);
+        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux","origine_travaux","planification_travaux"].forEach(k => delete data[k]);
         data.local_id = data.local_id || null;
         data.date_prevue = data.date_prevue || null;
         data.date_realisation = data.date_realisation || null;
