@@ -132,18 +132,19 @@
     return data;
   }
 
-  async function dbDelete(table, id) {
+  async function dbDelete(table, id, message) {
     if (!state.isAdmin) {
       toast("Lecture seule: suppression non autorisee.");
       return;
     }
-    if (!confirm("Supprimer cette ligne ?")) return;
+    if (!confirm(message || "Supprimer cette ligne ?")) return false;
     if (!sb) {
       localWrite(table, localRead(table).filter((r) => r.id !== id));
-      return;
+      return true;
     }
     const { error } = await sb.from(table).delete().eq("id", id);
     if (error) throw error;
+    return true;
   }
 
   function stripGenerated(table, row) {
@@ -685,7 +686,7 @@
       <div class="chips"><span class="chip ${/^P[12]|Critique|Urgente/.test(t.priorite) ? "red" : "orange"}">${escapeHtml(t.priorite)}</span><span class="chip ${closed(t) ? "green" : ""}">${escapeHtml(t.statut)}</span></div>
       <div class="works-amounts"><span>Estimation HT <b>${euro(t.montant_estime)}</b></span><span>Devis HT <b>${t.detail.devis_ht == null ? "—" : euro(t.detail.devis_ht)}</b></span><span>Réalisé HT <b>${euro(t.montant_reel)}</b></span></div>
       ${travauxNotesHtml(t)}
-      ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button></div>`)}
+      ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}
     </div>`;
     return `
       <div class="cards works-cards">
@@ -712,7 +713,7 @@
           <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
           <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
         </div>
-        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th></th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(t.montant_estime)}</td><td class="num">${t.detail.devis_ht==null?"—":euro(t.detail.devis_ht)}</td><td class="num">${euro(t.montant_reel)}</td><td>${adminHtml(`<button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
+        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th>Actions</th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(t.montant_estime)}</td><td class="num">${t.detail.devis_ht==null?"—":euro(t.detail.devis_ht)}</td><td class="num">${euro(t.montant_reel)}</td><td>${adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
         <div class="list mobile-list">${rows.length?rows.map(card).join(""):'<div class="empty">Aucune opération pour ces filtres</div>'}</div>
       </div>`;
   }
@@ -1297,8 +1298,17 @@
       await refresh("Pointage mis a jour");
     },
     async deleteRow(table, id) {
-      await dbDelete(table, id);
+      if (!await dbDelete(table, id)) return;
       await refresh("Ligne supprimee");
+    },
+    async deleteTravaux(id) {
+      if (!ensureAdminAction()) return;
+      const row = state.data.travaux.find(t => t.id === id);
+      if (!row) return;
+      try {
+        const deleted = await dbDelete("travaux", id, `Supprimer les travaux « ${row.titre} » ?\nCette suppression est définitive. Les fichiers associés ne sont pas supprimés.`);
+        if (deleted) await refresh("Travaux supprimés");
+      } catch (error) { toast(error.message || "Suppression impossible"); }
     },
     openLoyer(id) {
       if (!ensureAdminAction()) return;

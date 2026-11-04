@@ -45,6 +45,15 @@ async function run(viewport) {
     await page.getByLabel("Année travaux").selectOption("");
     assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-travaux-${viewport.width}.png`), fullPage: true });
+    const deleteButton = visibleList.getByRole("button", { name: "Supprimer", exact: true }).first();
+    page.once("dialog", dialog => dialog.dismiss());
+    await deleteButton.click();
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ruvelon_v3_travaux")).length), 2);
+    page.once("dialog", dialog => { assert.match(dialog.message(), /Éclairage/); return dialog.accept(); });
+    await deleteButton.click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("ruvelon_v3_travaux")).length === 1);
+    await page.waitForFunction(() => document.querySelector(".works-cards").textContent.includes("1200.00 EUR"));
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("ruvelon_v3_travaux"))[0].id), "one");
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 }
