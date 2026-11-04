@@ -771,6 +771,7 @@
           return {
             version: 1,
             encaissements_source: parsed.encaissements_source || "manuel",
+            encaissements_manuel_volontaire: parsed.encaissements_manuel_volontaire === true,
             encaissements: Array.isArray(parsed.encaissements) ? parsed.encaissements : [],
             interventions: Array.isArray(parsed.interventions) ? parsed.interventions : [],
             primes: Array.isArray(parsed.primes) ? parsed.primes : [],
@@ -809,9 +810,16 @@
       const paid = Math.min(expected, Math.max(0, Number(r.total_paye) || 0));
       const ht = Math.max(0, Number(r.loyer_ht) || 0);
       return { local: localLabel("locaux", r.local_id), locataire: localLabel("locataires", r.locataire_id),
-        loyer_ht: ht, encaissement_ht: expected > 0 ? round2(ht * paid / expected) : 0,
-        observations: `Pointage : ${euro(paid)} / ${euro(expected)} TTC, charges comprises`, loyer_id: r.id };
+        loyer_ht: r.facture_meg_faite ? ht : 0, encaissement_ht: expected > 0 ? round2(ht * paid / expected) : 0,
+        observations: `MEG : ${r.facture_meg_faite ? "facture réalisée" : "facture à faire"}. Paiement : ${euro(paid)} / ${euro(expected)} TTC, charges comprises`, loyer_id: r.id };
     });
+  }
+
+  function remunerationReceiptSource(row) {
+    const details = parseRemunerationDetails(row);
+    if (details.encaissements_source === "manuel" && details.encaissements_manuel_volontaire) return "manuel";
+    if (state.data.loyers_mensuels.some(r => String(r.mois).slice(0, 7) === String(row.mois).slice(0, 7))) return "pointage";
+    return details.encaissements_source || (row.id ? "manuel" : "pointage");
   }
 
   async function syncPointedRemuneration() {
@@ -1088,12 +1096,13 @@
     const encaissements = details.encaissements.length ? details.encaissements : [{}];
     const interventions = details.interventions.length ? details.interventions : [{}];
     const primes = details.primes.length ? details.primes : [{}];
+    const receiptSource = remunerationReceiptSource(r);
     return `<form id="edit-form" class="remuneration-form" data-table="remuneration_gerant" data-action="saveRemuneration">
       <input type="hidden" name="id" value="${escapeHtml(r.id || "")}">
       <input type="hidden" name="bareme_km" value="${escapeHtml(r.bareme_km || 0.636)}">
       <div class="detail-month-head">
         <label>Mois<input type="month" name="mois" value="${escapeHtml(String(r.mois || monthDate(state.month)).slice(0, 7))}" required onchange="App.recalcRemunerationForm(this.form)"></label>
-        <label>Encaissements HT<select name="encaissements_source" onchange="App.recalcRemunerationForm(this.form)"><option value="pointage" ${!r.id || details.encaissements_source==="pointage"?"selected":""}>Automatique depuis le pointage</option><option value="manuel" ${r.id && details.encaissements_source!=="pointage"?"selected":""}>Saisie manuelle</option></select></label>
+        <label>Encaissements HT<select name="encaissements_source" onchange="App.recalcRemunerationForm(this.form)"><option value="pointage" ${receiptSource==="pointage"?"selected":""}>Automatique depuis le pointage MEG</option><option value="manuel" ${receiptSource==="manuel"?"selected":""}>Saisie manuelle (dérogation)</option></select></label>
         <label>Prime responsabilite<input type="number" step="0.01" min="0" name="prime_responsabilite" value="${escapeHtml(r.prime_responsabilite || 0)}" oninput="App.recalcRemunerationForm(this.form)"></label>
       </div>
 
@@ -1116,6 +1125,7 @@
         <div class="detail-section-head"><div><span>4</span><h4>Recapitulatif automatique</h4></div></div>
         <div class="recap-grid">
           <div><small>Encaissements HT</small><strong data-recap="encaissements">0.00 EUR</strong></div>
+          <div><small>Loyers HT facturés MEG</small><strong data-recap="factures_ht">0.00 EUR</strong></div>
           <div><small>Brute 7%</small><strong data-recap="brute">0.00 EUR</strong></div>
           <div><small>Nette apres abattement</small><strong data-recap="nette">0.00 EUR</strong></div>
           <div><small>Heures</small><strong data-recap="heures">0.00</strong></div>
@@ -1353,6 +1363,7 @@
       const totals = remunerationDetailTotals(form, true);
       const values = {
         encaissements: euro(totals.encaissementsHt),
+        factures_ht: euro(sum(totals.encaissements, "loyer_ht")),
         brute: euro(totals.brute),
         nette: euro(totals.nette),
         heures: totals.heures.toFixed(2),
@@ -1517,8 +1528,10 @@
       ], "travaux"));
       this.setTravauxPlanning(document.getElementById("edit-form"));
     },
-    openRemuneration(id) {
+    async openRemuneration(id) {
       if (!ensureAdminAction()) return;
+      try { state.data.loyers_mensuels = await dbList("loyers_mensuels"); }
+      catch (error) { toast(error.message || "Impossible de charger le pointage du mois"); return; }
       const requestedMonth = `${state.year}-${state.month.slice(5, 7)}-01`;
       const r = state.data.remuneration_gerant.find((x) => x.id === id)
         || state.data.remuneration_gerant.find((x) => x.mois === requestedMonth)
@@ -1547,6 +1560,7 @@
       const details = {
         version: 1,
         encaissements_source: base.encaissements_source,
+        encaissements_manuel_volontaire: base.encaissements_source === "manuel",
         encaissements: totals.encaissements,
         interventions: totals.interventions,
         primes: totals.primes,

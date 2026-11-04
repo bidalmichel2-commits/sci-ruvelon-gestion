@@ -13,11 +13,12 @@ async function run(viewport) {
     await page.getByRole('button', { name: 'Mode apercu local' }).click();
     await page.evaluate(() => {
       localStorage.setItem('ruvelon_v3_loyers_mensuels', JSON.stringify([
-        { id: 'full', mois: '2026-11-01', loyer_ht: 1000, tva: 200, loyer_ttc: 1200, charges_mensuelles: 100, total_attendu: 1300, total_paye: 1300 },
-        { id: 'partial', mois: '2026-11-01', loyer_ht: 1000, tva: 200, loyer_ttc: 1200, total_attendu: 1200, total_paye: 600 },
+        { id: 'full', mois: '2026-11-01', facture_meg_faite: true, loyer_ht: 1000, tva: 200, loyer_ttc: 1200, charges_mensuelles: 100, total_attendu: 1300, total_paye: 1300 },
+        { id: 'partial', mois: '2026-11-01', facture_meg_faite: true, loyer_ht: 1000, tva: 200, loyer_ttc: 1200, total_attendu: 1200, total_paye: 600 },
         { id: 'unpaid', mois: '2026-11-01', loyer_ht: 1000, total_attendu: 1200, total_paye: 0 },
         { id: 'dec', mois: '2026-12-01', loyer_ht: 100, total_attendu: 120, total_paye: 120 }
       ]));
+      localStorage.setItem('ruvelon_v3_remuneration_gerant', JSON.stringify([{ id: 'old-month', annee: 2026, mois: '2026-11-01', encaissements_ht: 50, observations: JSON.stringify({ version: 1, encaissements_source: 'manuel', encaissements: [{ loyer_ht: 50, encaissement_ht: 50 }] }) }]));
     });
     await page.reload({ waitUntil: 'networkidle' });
     await page.getByRole('button', { name: 'Mode apercu local' }).click();
@@ -25,6 +26,10 @@ async function run(viewport) {
     const form = page.locator('#edit-form');
     const ht = () => form.locator('[data-recap="encaissements"]').innerText();
     assert.equal(await ht(), '1500.00 EUR');
+    assert.equal(await form.locator('[name="encaissements_source"]').inputValue(), 'pointage');
+    assert.deepEqual(await form.locator('[data-field="loyer_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [1000,1000,0]);
+    assert.deepEqual(await form.locator('[data-field="encaissement_ht"]').evaluateAll(els => els.map(e=>Number(e.value))), [1000,500,0]);
+    assert.equal(await form.locator('[data-recap="factures_ht"]').innerText(), '2000.00 EUR');
     assert.equal(await form.locator('[data-field="encaissement_ht"]').first().isEditable(), false);
     await form.locator('[name="mois"]').fill('2026-12');
     await form.locator('[name="mois"]').dispatchEvent('change');
