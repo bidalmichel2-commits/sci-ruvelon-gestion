@@ -2,6 +2,7 @@
   "use strict";
 
   const cfg = window.SCI_RUVELON_CONFIG || {};
+  const PERSONAL_VEHICLE_COST_PER_KM = 0.47;
   const hasConfig = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
   const sb = hasConfig ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
   const tables = ["locaux", "locataires", "baux", "loyers_mensuels", "travaux", "remuneration_gerant"];
@@ -846,7 +847,7 @@
     const kmTotal = round2(interventions.reduce((s, l) => s + numberValue(l.km), 0));
     const km = round2(interventions.filter(l => !isVisit(l) && !l.non_facturable).reduce((s, l) => s + numberValue(l.km), 0));
     const kmPerso = round2(kmTotal - km);
-    return { km, kmTotal, kmPerso, fraisKm: round2(km * rate), fraisPerso: round2(kmPerso * rate), coutDeplacements: round2(kmTotal * rate) };
+    return { km, kmTotal, kmPerso, fraisKm: round2(km * rate), fraisPerso: round2(kmPerso * PERSONAL_VEHICLE_COST_PER_KM), coutDeplacements: round2(kmTotal * PERSONAL_VEHICLE_COST_PER_KM) };
   }
 
   function savedTravel(row) {
@@ -864,6 +865,7 @@
     const heures = sum(rows, "heures");
     const autres = sum(rows, "autres_frais");
     const perso = round2(rows.reduce((s, r) => s + savedTravel(r).fraisPerso, 0));
+    const kmPerso = round2(rows.reduce((s, r) => s + savedTravel(r).kmPerso, 0));
     return `
       <div class="panel">
         <div class="panel-head"><h3>Suivi remuneration gerant</h3>${adminHtml(`<button class="primary" onclick="App.openRemuneration()">Saisir un mois</button>`)}</div>
@@ -873,7 +875,7 @@
           <div class="card"><small>Remuneration nette</small><strong>${euro(net)}</strong></div>
           <div class="card"><small>Primes</small><strong>${euro(primes)}</strong></div>
           <div class="card"><small>Frais km</small><strong>${euro(fraisKm)}</strong></div>
-          <div class="card orange"><small>Déplacements à ma charge</small><strong>${euro(perso)}</strong></div>
+          <div class="card orange"><small>Déplacements à ma charge · 0,47 €/km</small><strong>${euro(perso)}</strong><span>${kmPerso.toFixed(1)} km à ma charge</span></div>
           <div class="card"><small>Heures</small><strong>${heures.toFixed(2)}</strong></div>
           <div class="card green"><small>Compte courant</small><strong>${euro(total)}</strong></div>
         </div>
@@ -889,7 +891,7 @@
                 <td class="num">${euro(values.brut)}</td>
                 <td class="num">${euro(values.net)}</td>
                 <td class="num">${euro(values.primes)}</td>
-                <td class="num">${euro(values.fraisKm)}<div class="table-sub">À ma charge : ${euro(savedTravel(r).fraisPerso)}</div></td>
+                <td class="num">${euro(values.fraisKm)}<div class="table-sub">À ma charge : ${savedTravel(r).kmPerso.toFixed(1)} km · ${euro(savedTravel(r).fraisPerso)}</div></td>
                 <td class="num">${euro(r.autres_frais)}<div class="table-sub">${r.autres_frais_inclus_total ? "inclus" : "hors total"}</div></td>
                 <td class="num"><strong>${euro(values.total)}</strong></td>
                 <td class="num">${Number(r.heures || 0).toFixed(2)}</td>
@@ -904,7 +906,7 @@
           return `<div class="row">
             <div class="row-main"><div><div class="row-title">${escapeHtml(monthLabel(r.mois))}</div><div class="row-sub">HT ${euro(r.encaissements_ht)} - ${Number(r.heures || 0).toFixed(2)} h</div></div><div class="row-amount">${euro(values.total)}</div></div>
             <div class="chips"><span class="chip">Nette ${euro(values.net)}</span><span class="chip">Primes ${euro(values.primes)}</span><span class="chip">Km ${Number(r.km) || 0}</span><span class="chip ${r.autres_frais_inclus_total ? "orange" : ""}">Autres ${euro(r.autres_frais)}</span></div>
-            <div class="row-sub">Déplacements à ma charge : ${euro(savedTravel(r).fraisPerso)}</div>
+            <div class="row-sub">À ma charge : ${savedTravel(r).kmPerso.toFixed(1)} km · ${euro(savedTravel(r).fraisPerso)} (0,47 €/km)</div>
             ${adminHtml(`<div class="actions"><button onclick="App.openRemuneration('${r.id}')">Ouvrir le detail</button></div>`)}
           </div>`;
         }).join("") : `<div class="empty">Aucune ligne pour ${state.year}</div>`}</div>
@@ -1132,8 +1134,9 @@
           <div><small>Frais km</small><strong data-recap="frais_km">0.00 EUR</strong></div>
           <div><small>Km aller-retour totaux</small><strong data-recap="km_total">0</strong></div>
           <div><small>Km facturables SCI</small><strong data-recap="km_sci">0</strong></div>
-          <div><small>Déplacements à ma charge</small><strong data-recap="frais_perso">0.00 EUR</strong></div>
-          <div><small>Coût total déplacements (barème)</small><strong data-recap="cout_deplacements">0.00 EUR</strong></div>
+          <div><small>Km à ma charge</small><strong data-recap="km_perso">0</strong></div>
+          <div><small>À ma charge · 0,47 €/km</small><strong data-recap="frais_perso">0.00 EUR</strong></div>
+          <div><small>Coût véhicule total estimé · 0,47 €/km</small><strong data-recap="cout_deplacements">0.00 EUR</strong></div>
           <div><small>Primes</small><strong data-recap="primes">0.00 EUR</strong></div>
           <div><small>Autres frais</small><strong data-recap="autres">0.00 EUR</strong></div>
           <div class="recap-total"><small>Compte courant du mois</small><strong data-recap="total">0.00 EUR</strong></div>
@@ -1356,9 +1359,9 @@
         if (visit) checkbox.checked = true;
         else if (checkbox.disabled) checkbox.checked = false;
         checkbox.disabled = visit;
-        const cost = round2(numberValue(line.querySelector('[data-field="km"]').value) * rate);
-        line.querySelector('[data-travel="sci"]').textContent = euro(checkbox.checked ? 0 : cost);
-        line.querySelector('[data-travel="perso"]').textContent = euro(checkbox.checked ? cost : 0);
+        const distance = numberValue(line.querySelector('[data-field="km"]').value);
+        line.querySelector('[data-travel="sci"]').textContent = euro(checkbox.checked ? 0 : round2(distance * rate));
+        line.querySelector('[data-travel="perso"]').textContent = euro(checkbox.checked ? round2(distance * PERSONAL_VEHICLE_COST_PER_KM) : 0);
       });
       const totals = remunerationDetailTotals(form, true);
       const values = {
@@ -1370,6 +1373,7 @@
         frais_km: euro(totals.fraisKm),
         km_total: totals.kmTotal.toFixed(1),
         km_sci: totals.km.toFixed(1),
+        km_perso: totals.kmPerso.toFixed(1),
         frais_perso: euro(totals.fraisPerso),
         cout_deplacements: euro(totals.coutDeplacements),
         primes: euro(totals.primeEdl + totals.primeResponsabilite),
