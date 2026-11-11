@@ -417,6 +417,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 }
 
 .list { display: grid; gap: 8px; }
+.reports-panel .panel-head { gap: 12px; flex-wrap: wrap; }
+.reports-panel .panel-head h3 { overflow-wrap: anywhere; }
+.reports-panel .panel-head button { width: auto; margin: 0; padding: 0 12px; max-width: 100%; }
+.reports-panel > .list { margin: 0 16px 16px; }
+.report-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px; text-align: left; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--text); }
+.report-row:hover { background: var(--blue-bg); }
+.report-row strong, .report-row small { display: block; overflow-wrap: anywhere; }
+.report-row small { margin-top: 4px; color: var(--muted); }
+.report-count { flex-shrink: 0; color: var(--blue); font-size: 12px; }
+.report-count b { margin-left: 5px; }
+.report-note { padding: 12px 0; border-top: 1px solid var(--line); }
+.report-note p { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .row {
   display: grid;

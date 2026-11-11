@@ -3,6 +3,10 @@
 
   const cfg = window.SCI_RUVELON_CONFIG || {};
   const PERSONAL_VEHICLE_COST_PER_KM = 0.47;
+  const REPORT_CATEGORY = "compte_rendu";
+  const REPORT_NOTE_CATEGORY = "annotation_compte_rendu";
+  const REPORT_PDF_PREFIX = "data:application/pdf;base64,";
+  const REPORT_MAX_BYTES = 3 * 1024 * 1024;
   const hasConfig = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
   const sb = hasConfig ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
   const tables = ["locaux", "locataires", "baux", "loyers_mensuels", "travaux", "remuneration_gerant"];
@@ -14,6 +18,10 @@
     travauxStatus: "",
     travauxSearch: "",
     travauxOrigin: "",
+    reportRecords: [],
+    reportId: "",
+    reportsLoading: false,
+    reportsError: "",
     user: null,
     profile: null,
     isAdmin: false,
@@ -339,10 +347,7 @@
 
   function setupNav() {
     document.querySelectorAll(".app-nav button").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        state.route = btn.dataset.route;
-        render();
-      });
+      btn.addEventListener("click", () => App.go(btn.dataset.route));
     });
   }
 
@@ -360,6 +365,7 @@
     if (state.route === "baux") screen.innerHTML = renderBaux();
     if (state.route === "travaux") screen.innerHTML = renderTravauxScreen();
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
+    if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
     if (state.route === "plus") screen.innerHTML = renderPlus();
   }
 
@@ -629,6 +635,82 @@
           }).join("") : `<div class="empty">Aucun locataire</div>`}</div>
         </div>
       </div>`;
+  }
+
+  async function loadReportRecords() {
+    state.reportsLoading = true;
+    state.reportsError = "";
+    if (state.route === "comptes-rendus") render();
+    try {
+      const categories = [REPORT_CATEGORY, REPORT_NOTE_CATEGORY];
+      const fields = "id,nom_fichier,categorie,observations,created_at";
+      if (sb) {
+        const { data, error } = await sb.from("documents").select(fields).in("categorie", categories).order("created_at", { ascending: false });
+        if (error) throw error;
+        state.reportRecords = data || [];
+      } else {
+        state.reportRecords = localRead("documents").filter(r => categories.includes(r.categorie)).map(({url, ...row}) => row);
+      }
+    } catch (error) {
+      state.reportsError = "Impossible de charger les comptes rendus : " + (error.message || error);
+    } finally {
+      state.reportsLoading = false;
+      if (state.route === "comptes-rendus") render();
+    }
+  }
+
+  function reportDetails(row) {
+    try { return JSON.parse(row.observations || "{}") || {}; }
+    catch (error) { return {}; }
+  }
+
+  function findReport(id) {
+    return state.reportRecords.find(r => r.id === id && r.categorie === REPORT_CATEGORY);
+  }
+
+  function renderReports() {
+    setTitle("Comptes rendus");
+    const rows = state.reportRecords.filter(r => r.categorie === REPORT_CATEGORY)
+      .sort((a,b) => String(reportDetails(b).date || "").localeCompare(String(reportDetails(a).date || "")));
+    const report = findReport(state.reportId);
+    if (state.reportsLoading) return '<div class="empty">Chargement des comptes rendus…</div>';
+    if (state.reportsError) return `<div class="notice danger">${escapeHtml(state.reportsError)}</div><button class="secondary" onclick="App.go('comptes-rendus')">Réessayer</button>`;
+    if (!report) return `<section class="desktop-wrap panel reports-panel">
+      <div class="panel-head"><h3>Comptes rendus</h3>${adminHtml('<button class="primary" onclick="App.openReportForm()">Ajouter un compte rendu</button>')}</div>
+      <div class="list">${rows.length ? rows.map(r => {
+        const d = reportDetails(r);
+        const count = state.reportRecords.filter(n => n.categorie === REPORT_NOTE_CATEGORY && reportDetails(n).report_id === r.id).length;
+        return `<button class="report-row" onclick="App.viewReport('${escapeHtml(r.id)}')"><span><strong>${escapeHtml(d.title || r.nom_fichier)}</strong><small>${escapeHtml(fmtDate(d.date))} · PDF</small></span><span class="report-count">${count} annotation${count===1?"":"s"} <b aria-hidden="true">›</b></span></button>`;
+      }).join("") : '<div class="empty">Aucun compte rendu</div>'}</div>
+    </section>`;
+    const d = reportDetails(report);
+    const id = escapeHtml(report.id);
+    const notes = state.reportRecords.filter(n => n.categorie === REPORT_NOTE_CATEGORY && reportDetails(n).report_id === report.id).sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
+    return `<div class="desktop-wrap">
+      <button class="table-action" onclick="App.viewReport('')">← Comptes rendus</button>
+      <section class="panel reports-panel">
+        <div class="panel-head"><div><h3>${escapeHtml(d.title || report.nom_fichier)}</h3><div class="table-sub">${escapeHtml(fmtDate(d.date))} · PDF</div></div><button class="secondary" onclick="App.downloadReport('${id}',this)">Télécharger le PDF</button></div>
+      </section>
+      <section class="panel reports-panel">
+        <div class="panel-head"><h3>Annotations</h3>${adminHtml(`<button class="primary" onclick="App.openReportNote('${id}')">Ajouter une annotation</button>`)}</div>
+        <div class="list">${notes.length ? notes.map(n => {
+          const note = reportDetails(n);
+          return `<article class="report-note"><div class="table-sub">${escapeHtml(note.author || "")} · ${escapeHtml(fmtDate(n.created_at))}</div><p>${escapeHtml(note.text)}</p></article>`;
+        }).join("") : '<div class="empty">Aucune annotation</div>'}</div>
+      </section>
+    </div>`;
+  }
+
+  async function readReportPdf(file) {
+    if (!file || file.size > REPORT_MAX_BYTES || await file.slice(0,5).text() !== "%PDF-") {
+      throw new Error("Choisissez un fichier PDF de 3 Mo maximum.");
+    }
+    return new Promise((resolve,reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Impossible de lire le PDF."));
+      reader.readAsDataURL(new Blob([file], {type:"application/pdf"}));
+    });
   }
 
   function renderPlus() {
@@ -997,6 +1079,7 @@
         const action = form.dataset.action || "save";
         if (action === "saveRemuneration") await window.App.saveRemuneration(form);
         else if (action === "savePassword") await window.App.savePassword(form);
+        else if (action === "saveReport") await window.App.saveReport(form);
         else await window.App.save(form.dataset.table, form);
       });
     }
@@ -1250,7 +1333,82 @@
 
   window.App = {
     closeModal,
-    go(route) { state.route = route; render(); },
+    go(route) {
+      state.route = route;
+      if (route === "comptes-rendus") { state.reportId = ""; return loadReportRecords(); }
+      render();
+    },
+    viewReport(id) { state.reportId = id; render(); },
+    openReportForm() {
+      if (!ensureAdminAction()) return;
+      openModal("Ajouter un compte rendu", `<form data-action="saveReport" class="form-grid">
+        <label class="field-full">Titre<input name="title" required maxlength="160"></label>
+        <label>Date de réunion<input type="date" name="date" value="${today()}" required></label>
+        <label>Document PDF<input type="file" name="pdf" accept=".pdf,application/pdf" required></label>
+        <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
+      </form>`);
+    },
+    openReportNote(id) {
+      if (!ensureAdminAction() || !findReport(id)) return;
+      openModal("Ajouter une annotation", `<form data-action="saveReport" class="form-grid">
+        <input type="hidden" name="report_id" value="${escapeHtml(id)}">
+        <label class="field-full">Annotation<textarea name="text" rows="5" required maxlength="5000"></textarea></label>
+        <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
+      </form>`);
+    },
+    async saveReport(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = new FormData(form);
+        const reportId = data.get("report_id");
+        if (reportId) {
+          const report = findReport(reportId);
+          const text = String(data.get("text") || "").trim();
+          if (!report || !text || text.length > 5000) throw new Error("Saisissez une annotation valide.");
+          await dbSave("documents", { nom_fichier: "Annotation", categorie: REPORT_NOTE_CATEGORY, url: "", observations: JSON.stringify({report_id: report.id, text, author: state.profile?.nom || state.user?.email || ""}) });
+        } else {
+          const title = String(data.get("title") || "").trim();
+          if (!title || title.length > 160) throw new Error("Saisissez un titre valide.");
+          const file = data.get("pdf");
+          const url = await readReportPdf(file);
+          await dbSave("documents", { nom_fichier: file.name, categorie: REPORT_CATEGORY, url, observations: JSON.stringify({title,date:data.get("date")}) });
+        }
+        closeModal();
+        await loadReportRecords();
+        toast(reportId ? "Annotation enregistrée" : "Compte rendu enregistré");
+      } catch (error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
+    },
+    async downloadReport(id, button) {
+      const report = findReport(id);
+      if (!report || !state.profile?.actif || button.disabled) return;
+      button.disabled = true;
+      try {
+        let value;
+        if (sb) {
+          const { data, error } = await sb.from("documents").select("url").eq("id",id).eq("categorie",REPORT_CATEGORY).single();
+          if (error) throw error;
+          value = data.url;
+        } else {
+          value = localRead("documents").find(r => r.id === id && r.categorie === REPORT_CATEGORY)?.url;
+        }
+        if (!value?.startsWith(REPORT_PDF_PREFIX) || value.length > REPORT_MAX_BYTES * 4 / 3 + REPORT_PDF_PREFIX.length) throw new Error("PDF indisponible.");
+        const binary = atob(value.slice(REPORT_PDF_PREFIX.length));
+        if (!binary.startsWith("%PDF-")) throw new Error("PDF invalide.");
+        const href = URL.createObjectURL(new Blob([Uint8Array.from(binary,c => c.charCodeAt(0))], {type:"application/pdf"}));
+        const link = document.createElement("a");
+        link.href = href;
+        link.download = report.nom_fichier;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(href), 30000);
+      } catch (error) { toast(error.message || "Téléchargement impossible."); }
+      finally { button.disabled = false; }
+    },
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
     filterTravaux(field, value) {
