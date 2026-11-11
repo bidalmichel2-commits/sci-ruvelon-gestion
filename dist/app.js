@@ -18,6 +18,7 @@
     travauxStatus: "",
     travauxSearch: "",
     travauxOrigin: "",
+    entretienCategorie: "",
     reportRecords: [],
     reportId: "",
     reportsLoading: false,
@@ -364,6 +365,7 @@
     if (state.route === "locataires") screen.innerHTML = renderLocataires();
     if (state.route === "baux") screen.innerHTML = renderBaux();
     if (state.route === "travaux") screen.innerHTML = renderTravauxScreen();
+    if (state.route === "entretien") screen.innerHTML = renderEntretien();
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
     if (state.route === "plus") screen.innerHTML = renderPlus();
@@ -757,7 +759,7 @@
   }
 
   function renderTravaux() {
-    const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) }));
+    const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) })).filter(t => t.detail.rubrique !== "entretien");
     const years = [...new Set(all.map(t => String(t.detail.annee || "Non programme")))].sort();
     const statuses = [...new Set([...travauxStatuses, ...all.map(t => t.statut)])];
     const query = state.travauxSearch.toLocaleLowerCase("fr");
@@ -805,7 +807,28 @@
       </div>`;
   }
 
+  const entretienCategories = { menage: "Ménage et nettoyage", chaudiere: "Entretien chaudière", espaces_verts: "Espaces verts", relevage: "Poste de relevage", incendie: "Défense incendie", autre: "Autre entretien" };
+  const entretienFrequences = ["Ponctuel", "Hebdomadaire", "Mensuel", "Trimestriel", "Semestriel", "Annuel"];
   const travauxStatuses = ["0 - À chiffrer", "1 - Devis demandé", "2 - Devis reçu", "3 - Validé propriétaire", "4 - OS émis", "5 - En cours", "6 - Réceptionné", "7 - Soldé / Payé", "X - Reporté", "X - Abandonné"];
+
+  function renderEntretien() {
+    setTitle("Entretien");
+    const rows = state.data.travaux.map(t => ({...t, detail: travauxDetails(t)}))
+      .filter(t => t.detail.rubrique === "entretien" && (!state.entretienCategorie || t.detail.entretien_categorie === state.entretienCategorie))
+      .sort((a,b) => String(a.date_prevue || "9999").localeCompare(String(b.date_prevue || "9999")) || a.titre.localeCompare(b.titre,"fr"));
+    const label = t => entretienCategories[t.detail.entretien_categorie] || "À classer";
+    const date = t => fmtDate(t.date_prevue) || (t.detail.annee ? `${t.detail.annee} · date à définir` : "À définir");
+    const amount = t => Number(t.montant_reel) || (t.detail.devis_ht ?? t.montant_estime);
+    const place = t => t.detail.localisation || localLabel("locaux", t.local_id);
+    const actions = t => adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`);
+    return `<section class="desktop-wrap panel works-panel">
+      <div class="panel-head"><h3>Suivi de l’entretien</h3>${adminHtml('<button class="primary" onclick="App.openTravaux()">Ajouter</button>')}</div>
+      <div class="toolbar"><select aria-label="Catégorie d’entretien" onchange="App.filterTravaux('entretienCategorie',this.value)"><option value="">Toutes les catégories</option>${Object.entries(entretienCategories).map(([key,value]) => `<option value="${key}" ${state.entretienCategorie===key?"selected":""}>${value}</option>`).join("")}</select></div>
+      ${rows.length ? `<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Prestation</th><th>Catégorie / fréquence</th><th>Prestataire</th><th>Date prévue</th><th>Avancement</th><th>Montant HT</th><th>Actions</th></tr></thead><tbody>
+      ${rows.map(t => `<tr><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(place(t))}</div>${travauxNotesHtml(t)}</td><td>${escapeHtml(label(t))}<div class="table-sub">${escapeHtml(t.detail.entretien_frequence || "À définir")}</div></td><td>${escapeHtml(t.entreprise || "—")}</td><td>${escapeHtml(date(t))}</td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(amount(t))}</td><td>${actions(t)}</td></tr>`).join("")}
+      </tbody></table></div><div class="list mobile-list">${rows.map(t => `<div class="row"><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(place(t))}</div><div class="chips"><span class="chip">${escapeHtml(label(t))}</span><span class="chip">${escapeHtml(t.detail.entretien_frequence || "Fréquence à définir")}</span></div><div class="row-sub">Date prévue : ${escapeHtml(date(t))}</div><div>${escapeHtml(t.statut)} · ${euro(amount(t))} HT</div>${travauxNotesHtml(t)}${actions(t)}</div>`).join("")}</div>` : '<div class="empty">Aucune prestation dans cette catégorie</div>'}
+    </section>`;
+  }
 
   function travauxDetails(row) {
     try {
@@ -1412,7 +1435,7 @@
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
     filterTravaux(field, value) {
-      if (!["travauxYear", "travauxStatus", "travauxSearch", "travauxOrigin"].includes(field)) return;
+      if (!["travauxYear", "travauxStatus", "travauxSearch", "travauxOrigin", "entretienCategorie"].includes(field)) return;
       state[field] = value;
       render();
     },
@@ -1675,9 +1698,13 @@
       if (!ensureAdminAction()) return;
       const r = state.data.travaux.find((x) => x.id === id) || { statut: travauxStatuses[0], priorite: "P4" };
       const d = travauxDetails(r);
-      openModal("Travaux", formHtml([
+      const rubrique = d.rubrique === "entretien" || (!r.id && state.route === "entretien") ? "entretien" : "travaux";
+      openModal(rubrique === "entretien" ? "Entretien" : "Travaux", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
-        { name: "titre", label: "Travaux / étude", value: r.titre || "", required: true },
+        { name: "titre", label: "Intitulé", value: r.titre || "", required: true },
+        { type: "select", name: "rubrique_travaux", label: "Rubrique", value: rubrique, options: [{value:"travaux",label:"Travaux"},{value:"entretien",label:"Entretien"}], onchange:"App.setTravauxRubrique(this.form)" },
+        { type: "select", name: "categorie_entretien", label: "Catégorie d’entretien", value: d.entretien_categorie || state.entretienCategorie || "", options: [{value:"",label:"Choisir une catégorie"},...Object.entries(entretienCategories).map(([value,label])=>({value,label}))], required:true },
+        { type: "select", name: "frequence_entretien", label: "Fréquence", value: d.entretien_frequence || "", options: [{value:"",label:"À définir"},...entretienFrequences.map(x=>({value:x,label:x}))] },
         { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: [{ value: "nouveau", label: "Nouveau / imprévu" }, { value: "base", label: "Base Matthieu" }] },
         { type: "select", name: "planification_travaux", label: "Planification", value: d.annee || r.date_prevue ? "planifie" : "indefini", options: [{ value: "indefini", label: "À définir" }, { value: "planifie", label: "Planifié" }], onchange: "App.setTravauxPlanning(this.form)" },
         { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
@@ -1696,6 +1723,15 @@
         { type: "textarea", name: "notes_travaux", label: "Observations / décisions", value: d.notes || "" }
       ], "travaux"));
       this.setTravauxPlanning(document.getElementById("edit-form"));
+      this.setTravauxRubrique(document.getElementById("edit-form"));
+    },
+    setTravauxRubrique(form) {
+      const entretien = form.elements.rubrique_travaux.value === "entretien";
+      for (const name of ["categorie_entretien","frequence_entretien"]) {
+        const field = form.elements[name];
+        field.disabled = !entretien;
+        field.closest("label").hidden = !entretien;
+      }
     },
     async openRemuneration(id) {
       if (!ensureAdminAction()) return;
@@ -1779,6 +1815,11 @@
         const previous = state.data.travaux.find(t => t.id === data.id);
         const details = travauxDetails(previous || {});
         details.version_travaux = 1;
+        details.rubrique = data.rubrique_travaux === "entretien" ? "entretien" : "travaux";
+        if (details.rubrique === "entretien") {
+          details.entretien_categorie = data.categorie_entretien;
+          details.entretien_frequence = data.frequence_entretien;
+        }
         details.origine = data.origine_travaux === "base" ? "base" : "nouveau";
         if (data.planification_travaux === "indefini") { data.annee_cible = ""; data.date_prevue = null; }
         details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
@@ -1787,7 +1828,7 @@
         details.note_matt = data.note_matt_travaux;
         details.notes = data.notes_travaux;
         data.observations = JSON.stringify(details);
-        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux","origine_travaux","planification_travaux"].forEach(k => delete data[k]);
+        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux","origine_travaux","planification_travaux","rubrique_travaux","categorie_entretien","frequence_entretien"].forEach(k => delete data[k]);
         data.local_id = data.local_id || null;
         data.date_prevue = data.date_prevue || null;
         data.date_realisation = data.date_realisation || null;

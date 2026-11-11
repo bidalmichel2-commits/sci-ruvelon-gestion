@@ -87,6 +87,41 @@ async function run(viewport) {
     added = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t => t.titre === 'Fuite imprévue'));
     assert.equal(JSON.parse(added.observations).annee, null);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-travaux-ajout-${viewport.width}.png`), fullPage: true });
+    await page.locator('[data-route="entretien"]').click();
+    await page.locator('.works-panel .panel-head button').click();
+    assert.equal(await newForm.locator('[name="rubrique_travaux"]').inputValue(), 'entretien');
+    await newForm.locator('[name="titre"]').fill('Contrôle chaudière');
+    await newForm.locator('[name="categorie_entretien"]').selectOption('chaudiere');
+    await newForm.locator('[name="frequence_entretien"]').selectOption('Annuel');
+    await newForm.locator('[name="planification_travaux"]').selectOption('planifie');
+    await newForm.locator('[name="date_prevue"]').fill('2027-02-12');
+    await newForm.locator('[name="entreprise"]').fill('Prestataire test');
+    await newForm.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForFunction(() => document.getElementById('modal').hidden);
+    assert.match(await page.locator('#screen').innerText(), /Contrôle chaudière/);
+    assert.match(await page.locator('#screen').innerText(), /Annuel/);
+    assert.match(await page.locator('#screen').innerText(), /12\/02\/2027/);
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Fuite imprévue/);
+    await page.getByLabel('Catégorie d’entretien').selectOption('menage');
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Contrôle chaudière/);
+    await page.getByLabel('Catégorie d’entretien').selectOption('');
+    const savedMaintenance = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t=>t.titre==='Contrôle chaudière'));
+    assert.equal(JSON.parse(savedMaintenance.observations).entretien_categorie, 'chaudiere');
+    assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
+    await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-entretien-${viewport.width}.png`) });
+    await page.locator('[data-route="travaux"]').click();
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Contrôle chaudière/);
+    await page.evaluate(() => App.openTravaux('one'));
+    await newForm.locator('[name="rubrique_travaux"]').selectOption('entretien');
+    await newForm.locator('[name="categorie_entretien"]').selectOption('autre');
+    await newForm.getByRole('button', { name: 'Enregistrer' }).click();
+    await page.waitForFunction(() => document.getElementById('modal').hidden);
+    const reclassified = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t=>t.id==='one'));
+    assert.equal(JSON.parse(reclassified.observations).rubrique, 'entretien');
+    assert.equal(JSON.parse(reclassified.observations).source_key, 'test-one');
+    assert.equal(reclassified.montant_estime, 1200);
+    await page.locator('[data-route="entretien"]').click();
+    assert.match(await page.locator('#screen').innerText(), /Réfection toiture/);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 }
@@ -97,6 +132,6 @@ async function run(viewport) {
     await new Promise((resolve, reject) => { server.stdout.once("data", resolve); server.once("error", reject); });
     await run({ width: 1440, height: 900 });
     await run({ width: 390, height: 844 });
-    console.log("OK - synthese, filtres, saisie travaux et conservation des details desktop/mobile");
+    console.log("OK - travaux et entretien separes, ajout, classement et filtres desktop/mobile");
   } finally { server.kill(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
