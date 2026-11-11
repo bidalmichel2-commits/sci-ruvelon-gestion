@@ -847,23 +847,79 @@
   const entretienFrequences = ["Ponctuel", "Hebdomadaire", "Mensuel", "Trimestriel", "Semestriel", "Annuel"];
   const travauxStatuses = ["0 - À chiffrer", "1 - Devis demandé", "2 - Devis reçu", "3 - Validé propriétaire", "4 - OS émis", "5 - En cours", "6 - Réceptionné", "7 - Soldé / Payé", "X - Reporté", "X - Abandonné"];
 
+  function entretienForecast(rows, currentYear) {
+    const byYear = new Map();
+    const unplanned = [];
+    const bucket = year => {
+      if (!byYear.has(year)) byYear.set(year, {year, recurring:0, oneOff:0, billed:0, unconfirmed:0});
+      return byYear.get(year);
+    };
+    for (let year=currentYear; year<=currentYear+2; year++) bucket(year);
+    const entries = rows.map(t => {
+      const d = t.detail || travauxDetails(t);
+      const planned = Number(String(t.date_prevue || "").slice(0,4)) || Number(d.annee) || 0;
+      const actual = money(t.montant_reel);
+      const billedYear = actual ? Number(String(d.date_document || t.date_realisation || "").slice(0,4)) || planned : 0;
+      return {t,d,planned,actual,billedYear};
+    });
+    for (const {planned,billedYear} of entries) {
+      if (planned) bucket(planned);
+      if (billedYear) bucket(billedYear);
+    }
+    for (const {t,d,planned,actual,billedYear} of entries) {
+      if (billedYear) bucket(billedYear).billed += actual;
+      const recurring = entretienFrequences.includes(d.entretien_frequence) && d.entretien_frequence !== "Ponctuel";
+      const pending = money(d.budget_indique);
+      const estimate = money(t.montant_estime) || money(d.devis_ht);
+      const cancelled = /^X\s*-|abandonn|reporté/i.test(t.statut || "");
+      if (actual && !billedYear) unplanned.push({title:t.titre, amount:actual, basis:"HT facturé"});
+      if (cancelled || d.entretien_exclure_budget === true || (!estimate && !pending) || (!recurring && actual)) continue;
+      const years = recurring
+        ? [...byYear.keys()].filter(y => y >= Math.max(currentYear,planned || Number(String(d.date_document || "").slice(0,4))))
+        : planned ? [planned] : [];
+      if (!years.length && !billedYear) unplanned.push({title:t.titre, amount:pending || estimate, basis:pending ? "HT/TTC à préciser" : "HT"});
+      for (const year of years) {
+        const total = bucket(year);
+        if (pending) {
+          if (year !== billedYear) total.unconfirmed += pending;
+        } else {
+          // Keep the annual target, without counting an already invoiced amount twice.
+          total[recurring ? "recurring" : "oneOff"] += year === billedYear ? Math.max(0,estimate-actual) : estimate;
+        }
+      }
+    }
+    return {years:[...byYear.values()].sort((a,b)=>a.year-b.year).map(r=>({...r,total:round2(r.recurring+r.oneOff+r.billed)})), unplanned};
+  }
+
+  function renderEntretienForecast(rows) {
+    const {years,unplanned} = entretienForecast(rows, Number(currentMonth().slice(0,4)));
+    return `<section class="panel entretien-budget">
+      <div class="panel-head"><div><h3>Prévisionnel par année</h3><div class="table-sub">Toutes catégories · Total HT, factures comprises</div></div></div>
+      <div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th class="num">Récurrent HT</th><th class="num">Ponctuel HT</th><th class="num">Facturé HT</th><th class="num">Total prévu HT</th><th class="num">HT/TTC à préciser</th></tr></thead><tbody>
+      ${years.map(r => `<tr><td><strong>${r.year}</strong></td><td class="num">${euro(r.recurring)}</td><td class="num">${euro(r.oneOff)}</td><td class="num">${euro(r.billed)}</td><td class="num"><strong>${euro(r.total)}</strong></td><td class="num">${r.unconfirmed ? euro(r.unconfirmed) : "—"}</td></tr>`).join("")}
+      </tbody></table></div>
+      <div class="list mobile-list">${years.map(r => `<div class="row"><div class="row-main"><strong>${r.year}</strong><strong>${euro(r.total)} HT</strong></div><div class="works-amounts"><span>Récurrent HT<b>${euro(r.recurring)}</b></span><span>Ponctuel HT<b>${euro(r.oneOff)}</b></span><span>Facturé HT<b>${euro(r.billed)}</b></span></div>${r.unconfirmed ? `<div class="row-sub">Hors total · HT/TTC à préciser : ${euro(r.unconfirmed)}</div>` : ""}</div>`).join("")}</div>
+      ${unplanned.length ? `<div class="notice info"><strong>Sans année définie · hors total</strong><ul>${unplanned.map(r=>`<li>${escapeHtml(r.title)} : ${euro(r.amount)} (${r.basis})</li>`).join("")}</ul></div>` : ""}
+    </section>`;
+  }
+
   function renderEntretien() {
     setTitle("Entretien");
-    const rows = state.data.travaux.map(t => ({...t, detail: travauxDetails(t)}))
-      .filter(t => t.detail.rubrique === "entretien" && (!state.entretienCategorie || t.detail.entretien_categorie === state.entretienCategorie))
+    const all = state.data.travaux.map(t => ({...t, detail: travauxDetails(t)})).filter(t => t.detail.rubrique === "entretien");
+    const rows = all.filter(t => !state.entretienCategorie || t.detail.entretien_categorie === state.entretienCategorie)
       .sort((a,b) => String(a.date_prevue || "9999").localeCompare(String(b.date_prevue || "9999")) || a.titre.localeCompare(b.titre,"fr"));
     const label = t => entretienCategories[t.detail.entretien_categorie] || "À classer";
     const date = t => fmtDate(t.date_prevue) || (t.detail.annee ? `${t.detail.annee} · date à définir` : "À définir");
     const amount = t => Number(t.montant_reel) || (t.detail.devis_ht ?? t.montant_estime);
     const place = t => t.detail.localisation || localLabel("locaux", t.local_id);
     const actions = t => adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`);
-    return `<section class="desktop-wrap panel works-panel">
+    return `<div class="desktop-wrap">${renderEntretienForecast(all)}<section class="panel works-panel">
       <div class="panel-head"><h3>Suivi de l’entretien</h3>${adminHtml('<button class="primary" onclick="App.openTravaux()">Ajouter</button>')}</div>
       <div class="toolbar"><select aria-label="Catégorie d’entretien" onchange="App.filterTravaux('entretienCategorie',this.value)"><option value="">Toutes les catégories</option>${Object.entries(entretienCategories).map(([key,value]) => `<option value="${key}" ${state.entretienCategorie===key?"selected":""}>${value}</option>`).join("")}</select></div>
       ${rows.length ? `<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Prestation</th><th>Catégorie / fréquence</th><th>Prestataire</th><th>Date prévue</th><th>Avancement</th><th>Montant HT</th><th>Actions</th></tr></thead><tbody>
       ${rows.map(t => `<tr><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(place(t))}</div>${travauxNotesHtml(t)}</td><td>${escapeHtml(label(t))}<div class="table-sub">${escapeHtml(t.detail.entretien_frequence || "À définir")}</div></td><td>${escapeHtml(t.entreprise || "—")}</td><td>${escapeHtml(date(t))}</td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(amount(t))}</td><td>${actions(t)}</td></tr>`).join("")}
       </tbody></table></div><div class="list mobile-list">${rows.map(t => `<div class="row"><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(place(t))}</div><div class="chips"><span class="chip">${escapeHtml(label(t))}</span><span class="chip">${escapeHtml(t.detail.entretien_frequence || "Fréquence à définir")}</span></div><div class="row-sub">Date prévue : ${escapeHtml(date(t))}</div><div>${escapeHtml(t.statut)} · ${euro(amount(t))} HT</div>${travauxNotesHtml(t)}${actions(t)}</div>`).join("")}</div>` : '<div class="empty">Aucune prestation dans cette catégorie</div>'}
-    </section>`;
+    </section></div>`;
   }
 
   function travauxDetails(row) {
@@ -1721,6 +1777,8 @@
         { type: "select", name: "rubrique_travaux", label: "Rubrique", value: rubrique, options: [{value:"travaux",label:"Travaux"},{value:"entretien",label:"Entretien"}], onchange:"App.setTravauxRubrique(this.form)" },
         { type: "select", name: "categorie_entretien", label: "Catégorie d’entretien", value: d.entretien_categorie || state.entretienCategorie || "", options: [{value:"",label:"Choisir une catégorie"},...Object.entries(entretienCategories).map(([value,label])=>({value,label}))], required:true },
         { type: "select", name: "frequence_entretien", label: "Fréquence", value: d.entretien_frequence || "", options: [{value:"",label:"À définir"},...entretienFrequences.map(x=>({value:x,label:x}))] },
+        { type: "number", min: "0", step: "0.01", name: "budget_entretien", label: "Budget sans base HT/TTC (€)", value: d.budget_indique ?? "" },
+        { type: "checkbox", name: "exclure_budget_entretien", label: "Exclure l’estimation du prévisionnel", value: d.entretien_exclure_budget === true },
         { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: [{ value: "nouveau", label: "Nouveau / imprévu" }, { value: "base", label: "Base Matthieu" }] },
         { type: "select", name: "planification_travaux", label: "Planification", value: d.annee || r.date_prevue ? "planifie" : "indefini", options: [{ value: "indefini", label: "À définir" }, { value: "planifie", label: "Planifié" }], onchange: "App.setTravauxPlanning(this.form)" },
         { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
@@ -1729,7 +1787,7 @@
         { type: "select", name: "priorite", label: "Priorité", value: r.priorite, options: [...new Set(["P1","P2","P3","P4","P5","P6",r.priorite])].filter(Boolean).map((x) => ({ value: x, label: ({P1:"P1 - Sécurité",P2:"P2 - Urgent",P3:"P3 - Important",P4:"P4 - Programmé",P5:"P5 - Pluriannuel",P6:"P6 - Long terme"})[x] || x })) },
         { type: "select", name: "statut", label: "Avancement", value: r.statut, options: [...new Set([...travauxStatuses, r.statut])].filter(Boolean).map((x) => ({ value: x, label: x })) },
         { name: "entreprise", label: "Entreprise / prestataire", value: r.entreprise || "" },
-        { type: "number", min: "0", step: "0.01", name: "montant_estime", label: "Estimation HT (€)", value: r.montant_estime || 0 },
+        { type: "number", min: "0", step: "0.01", name: "montant_estime", label: rubrique === "entretien" ? "Budget HT (annuel si récurrent)" : "Estimation HT (€)", value: r.montant_estime || 0 },
         { type: "number", min: "0", step: "0.01", name: "devis_ht_travaux", label: "Devis HT (€)", value: d.devis_ht ?? "" },
         { type: "number", min: "0", step: "0.01", name: "montant_reel", label: "Réalisé HT (€)", value: r.montant_reel || 0 },
         { type: "date", name: "date_prevue", label: "Date prévue (si connue)", value: r.date_prevue || "" },
@@ -1743,7 +1801,9 @@
     },
     setTravauxRubrique(form) {
       const entretien = form.elements.rubrique_travaux.value === "entretien";
-      for (const name of ["categorie_entretien","frequence_entretien"]) {
+      const estimateLabel = form.elements.montant_estime.closest("label");
+      estimateLabel.firstChild.textContent = entretien ? "Budget HT (annuel si récurrent)" : "Estimation HT (€)";
+      for (const name of ["categorie_entretien","frequence_entretien","budget_entretien","exclure_budget_entretien"]) {
         const field = form.elements[name];
         field.disabled = !entretien;
         field.closest("label").hidden = !entretien;
@@ -1835,6 +1895,8 @@
         if (details.rubrique === "entretien") {
           details.entretien_categorie = data.categorie_entretien;
           details.entretien_frequence = data.frequence_entretien;
+          details.budget_indique = data.budget_entretien === "" ? null : money(data.budget_entretien);
+          details.entretien_exclure_budget = !!data.exclure_budget_entretien;
         }
         details.origine = data.origine_travaux === "base" ? "base" : "nouveau";
         if (data.planification_travaux === "indefini") { data.annee_cible = ""; data.date_prevue = null; }
@@ -1844,7 +1906,7 @@
         details.note_matt = data.note_matt_travaux;
         details.notes = data.notes_travaux;
         data.observations = JSON.stringify(details);
-        ["annee_cible","localisation_travaux","devis_ht_travaux","note_matt_travaux","notes_travaux","origine_travaux","planification_travaux","rubrique_travaux","categorie_entretien","frequence_entretien"].forEach(k => delete data[k]);
+        ["annee_cible","localisation_travaux","devis_ht_travaux","notes_travaux","note_matt_travaux","origine_travaux","planification_travaux","rubrique_travaux","categorie_entretien","frequence_entretien","budget_entretien","exclure_budget_entretien"].forEach(k => delete data[k]);
         data.local_id = data.local_id || null;
         data.date_prevue = data.date_prevue || null;
         data.date_realisation = data.date_realisation || null;

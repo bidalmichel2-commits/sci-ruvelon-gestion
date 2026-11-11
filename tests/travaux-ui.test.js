@@ -96,11 +96,13 @@ async function run(viewport) {
     await newForm.locator('[name="planification_travaux"]').selectOption('planifie');
     await newForm.locator('[name="date_prevue"]').fill('2027-02-12');
     await newForm.locator('[name="entreprise"]').fill('Prestataire test');
+    await newForm.locator('[name="montant_estime"]').fill('178');
     await newForm.getByRole('button', { name: 'Enregistrer' }).click();
     await page.waitForFunction(() => document.getElementById('modal').hidden);
     assert.match(await page.locator('#screen').innerText(), /Contrôle chaudière/);
     assert.match(await page.locator('#screen').innerText(), /Annuel/);
     assert.match(await page.locator('#screen').innerText(), /12\/02\/2027/);
+    assert.match(await page.locator('.entretien-budget').innerText(), /178.00 EUR/);
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Fuite imprévue/);
     await page.getByLabel('Catégorie d’entretien').selectOption('menage');
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Contrôle chaudière/);
