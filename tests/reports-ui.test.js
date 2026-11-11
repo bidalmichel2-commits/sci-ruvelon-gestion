@@ -47,6 +47,23 @@ async function run(viewport) {
     assert.equal(records.filter(r => JSON.parse(r.observations).report_id === report.id).length, 2);
     assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-comptes-rendus-${viewport.width}.png`) });
+    await page.evaluate(url => {
+      const baux = JSON.parse(localStorage.getItem("ruvelon_v3_baux"));
+      const docs = JSON.parse(localStorage.getItem("ruvelon_v3_documents"));
+      const id = "12345678-1234-4321-8123-123456789abc";
+      baux[0].document_url = "document:" + id;
+      docs.push({id, bail_id:baux[0].id, categorie:"bail_pdf", nom_fichier:"bail-test.pdf", url});
+      localStorage.setItem("ruvelon_v3_baux", JSON.stringify(baux));
+      localStorage.setItem("ruvelon_v3_documents", JSON.stringify(docs));
+    },report.url);
+    await page.reload({ waitUntil:"networkidle" });
+    await page.getByRole("button", {name:"Mode apercu local"}).click();
+    await page.locator('[data-route="baux"]').click();
+    const leaseDownload = page.waitForEvent("download");
+    await page.getByRole("button", {name:"Télécharger le bail"}).click();
+    const lease = await leaseDownload;
+    assert.equal(lease.suggestedFilename(), "bail-test.pdf");
+    assert.deepEqual(await fs.readFile(await lease.path()), pdf);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 }
@@ -57,6 +74,6 @@ async function run(viewport) {
     await new Promise((resolve, reject) => { server.stdout.once("data", resolve); server.once("error", reject); });
     await run({ width: 1440, height: 900 });
     await run({ width: 390, height: 844 });
-    console.log("OK - ajout, PDF identique, annotations separees, persistance et affichage desktop/mobile");
+    console.log("OK - PDF comptes rendus et baux, annotations, persistance desktop/mobile");
   } finally { server.kill(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

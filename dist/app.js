@@ -5,8 +5,9 @@
   const PERSONAL_VEHICLE_COST_PER_KM = 0.47;
   const REPORT_CATEGORY = "compte_rendu";
   const REPORT_NOTE_CATEGORY = "annotation_compte_rendu";
-  const REPORT_PDF_PREFIX = "data:application/pdf;base64,";
+  const PDF_DATA_PREFIX = "data:application/pdf;base64,";
   const REPORT_MAX_BYTES = 3 * 1024 * 1024;
+  const LEASE_MAX_BYTES = 12 * 1024 * 1024;
   const hasConfig = !!(cfg.supabaseUrl && cfg.supabaseAnonKey && window.supabase);
   const sb = hasConfig ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseAnonKey) : null;
   const tables = ["locaux", "locataires", "baux", "loyers_mensuels", "travaux", "remuneration_gerant"];
@@ -523,6 +524,7 @@
           <div class="panel-head"><h3>Baux</h3>${adminHtml(`<button class="primary" onclick="App.openBail()">Ajouter</button>`)}</div>
           <div class="list">${rows.length ? rows.map((b) => {
             const tenant = tenantById(b.locataire_id);
+            const hasPdf = Boolean(leaseDocumentId(b));
             const phone = String(tenant && tenant.telephone || "").trim();
             const phoneHtml = phone
               ? `<a class="phone-link" href="tel:${escapeHtml(phoneDialValue(phone))}">Tel. ${escapeHtml(phone)}</a>`
@@ -536,7 +538,7 @@
                   <span class="chip ${leaseChipClass(b)}">${escapeHtml(b.statut)}</span>
                 </div>
                 <div class="chips"><span class="chip green">Total TTC ${euro(loyerFromBail(b.id).total_attendu)}</span><span class="chip">Loyer TTC ${euro(loyerFromBail(b.id).loyer_ttc)}</span><span class="chip">Charges ${euro(b.charges_mensuelles)}</span><span class="chip">HT ${euro(b.loyer_ht)}</span>${isSecondaryBail(b) ? `<span class="chip">Local associe</span>` : ""}${b.renouvellement_auto ? `<span class="chip green">Renouv. auto</span>` : ""}</div>
-                ${adminHtml(`<div class="actions"><button onclick="App.openBail('${b.id}')">Modifier</button></div>`)}
+                <div class="actions">${hasPdf ? `<button onclick="App.downloadLease('${b.id}',this)">Télécharger le bail</button>` : ""}${adminHtml(`<button onclick="App.openBail('${b.id}')">Modifier</button>`)}</div>
               </div>`;
           }).join("") : `<div class="empty">Aucun bail</div>`}</div>
         </div>
@@ -713,6 +715,40 @@
       reader.onerror = () => reject(new Error("Impossible de lire le PDF."));
       reader.readAsDataURL(new Blob([file], {type:"application/pdf"}));
     });
+  }
+
+  function leaseDocumentId(bail) {
+    return /^document:([a-f0-9-]{36})$/i.exec(String(bail.document_url || ""))?.[1] || "";
+  }
+
+  async function downloadStoredPdf({id, category, bailId, maxBytes}, button) {
+    if (!id || !state.profile?.actif || button.disabled) return;
+    button.disabled = true;
+    try {
+      let doc;
+      if (sb) {
+        let query = sb.from("documents").select("url,nom_fichier").eq("id",id).eq("categorie",category);
+        if (bailId) query = query.eq("bail_id",bailId);
+        const {data,error} = await query.single();
+        if (error) throw error;
+        doc = data;
+      } else {
+        doc = localRead("documents").find(r => r.id === id && r.categorie === category && (!bailId || r.bail_id === bailId));
+      }
+      const value = doc?.url;
+      if (!value?.startsWith(PDF_DATA_PREFIX) || value.length > 4 * Math.ceil(maxBytes / 3) + PDF_DATA_PREFIX.length) throw new Error("PDF indisponible.");
+      const binary = atob(value.slice(PDF_DATA_PREFIX.length));
+      if (!binary.startsWith("%PDF-") || binary.length > maxBytes) throw new Error("PDF invalide.");
+      const href = URL.createObjectURL(new Blob([Uint8Array.from(binary,c => c.charCodeAt(0))], {type:"application/pdf"}));
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = doc.nom_fichier;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 30000);
+    } catch (error) { toast(error.message || "Téléchargement impossible."); }
+    finally { button.disabled = false; }
   }
 
   function renderPlus() {
@@ -1405,32 +1441,12 @@
       } catch (error) { toast(error.message || "Enregistrement impossible."); }
       finally { submit.disabled = false; }
     },
-    async downloadReport(id, button) {
-      const report = findReport(id);
-      if (!report || !state.profile?.actif || button.disabled) return;
-      button.disabled = true;
-      try {
-        let value;
-        if (sb) {
-          const { data, error } = await sb.from("documents").select("url").eq("id",id).eq("categorie",REPORT_CATEGORY).single();
-          if (error) throw error;
-          value = data.url;
-        } else {
-          value = localRead("documents").find(r => r.id === id && r.categorie === REPORT_CATEGORY)?.url;
-        }
-        if (!value?.startsWith(REPORT_PDF_PREFIX) || value.length > REPORT_MAX_BYTES * 4 / 3 + REPORT_PDF_PREFIX.length) throw new Error("PDF indisponible.");
-        const binary = atob(value.slice(REPORT_PDF_PREFIX.length));
-        if (!binary.startsWith("%PDF-")) throw new Error("PDF invalide.");
-        const href = URL.createObjectURL(new Blob([Uint8Array.from(binary,c => c.charCodeAt(0))], {type:"application/pdf"}));
-        const link = document.createElement("a");
-        link.href = href;
-        link.download = report.nom_fichier;
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        setTimeout(() => URL.revokeObjectURL(href), 30000);
-      } catch (error) { toast(error.message || "Téléchargement impossible."); }
-      finally { button.disabled = false; }
+    downloadReport(id, button) {
+      if (findReport(id)) return downloadStoredPdf({id,category:REPORT_CATEGORY,maxBytes:REPORT_MAX_BYTES},button);
+    },
+    downloadLease(id, button) {
+      const bail = state.data.baux.find(b => b.id === id);
+      if (bail) return downloadStoredPdf({id:leaseDocumentId(bail),category:"bail_pdf",bailId:id,maxBytes:LEASE_MAX_BYTES},button);
     },
     setMonth(v) { state.month = v || currentMonth(); render(); },
     setYear(v) { state.year = String(v || new Date().getFullYear()); render(); },
@@ -1685,7 +1701,7 @@
         { type: "number", step: "0.01", min: "0", name: "depot_garantie", label: "Depot de garantie", value: r.depot_garantie || 0 },
         { type: "checkbox", name: "renouvellement_auto", label: "Renouvellement automatique", value: r.renouvellement_auto },
         { type: "select", name: "statut", label: "Statut", value: r.statut, options: ["Actif", "En preparation", "Renouvele", "Resilie", "Archive"].map((x) => ({ value: x, label: x })) },
-        { name: "document_url", label: "Lien du bail", value: r.document_url || "" },
+        { name: "document_url", label: leaseDocumentId(r) ? "PDF rattaché" : "Lien du bail", value: r.document_url || "", readonly: Boolean(leaseDocumentId(r)) },
         { type: "textarea", name: "observations", label: "Observations", value: r.observations || "" }
       ], "baux"));
       this.recalcBailForm(document.getElementById("edit-form"));
