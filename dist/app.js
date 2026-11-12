@@ -2005,10 +2005,6 @@
       ], "baux"));
       this.recalcBailForm(document.getElementById("edit-form"));
     },
-    setTravauxPlanning(form) {
-      const unknown = form.elements.planification_travaux.value === "indefini";
-      ["annee_cible", "date_prevue"].forEach(name => { form.elements[name].disabled = unknown; });
-    },
     openTravaux(id) {
       if (!ensureAdminAction()) return;
       const r = state.data.travaux.find((x) => x.id === id) || { statut: travauxStatuses[0], priorite: "P4" };
@@ -2024,8 +2020,7 @@
         { type: "number", min: "0", step: "0.01", name: "budget_entretien", label: "Budget sans base HT/TTC (€)", value: d.budget_indique ?? "" },
         { type: "checkbox", name: "exclure_budget_entretien", label: "Exclure l’estimation du prévisionnel", value: d.entretien_exclure_budget === true },
         { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: Object.entries(travauxOrigins).map(([value,label])=>({value,label})) },
-        { type: "select", name: "planification_travaux", label: "Planification", value: d.annee || r.date_prevue ? "planifie" : "indefini", options: [{ value: "indefini", label: "À définir" }, { value: "planifie", label: "Planifié" }], onchange: "App.setTravauxPlanning(this.form)" },
-        { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
+        { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue (facultative)", value: d.annee || "" },
         { name: "localisation_travaux", label: "Lieu / sous-zone", value: d.localisation || "" },
         { type: "select", name: "local_id", label: "Local", value: r.local_id, options: options("locaux", "General") },
         { type: "select", name: "priorite", label: "Priorité", value: r.priorite, options: [...new Set(["P1","P2","P3","P4","P5","P6",r.priorite])].filter(Boolean).map((x) => ({ value: x, label: ({P1:"P1 - Sécurité",P2:"P2 - Urgent",P3:"P3 - Important",P4:"P4 - Programmé",P5:"P5 - Pluriannuel",P6:"P6 - Long terme"})[x] || x })) },
@@ -2040,7 +2035,6 @@
         { type: "textarea", name: "note_matt_travaux", label: "Annotation Matthieu / arbitrage", value: d.note_matt || "" },
         { type: "textarea", name: "notes_travaux", label: "Observations / décisions", value: d.notes || "" }
       ], "travaux"));
-      this.setTravauxPlanning(document.getElementById("edit-form"));
       this.setTravauxRubrique(document.getElementById("edit-form"));
     },
     setTravauxRubrique(form) {
@@ -2190,14 +2184,13 @@
           details.entretien_exclure_budget = !!data.exclure_budget_entretien;
         }
         details.origine = Object.hasOwn(travauxOrigins,data.origine_travaux) ? data.origine_travaux : "nouveau";
-        if (data.planification_travaux === "indefini") { data.annee_cible = ""; data.date_prevue = null; }
         details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
         details.localisation = data.localisation_travaux;
         details.devis_ht = data.devis_ht_travaux === "" ? null : money(data.devis_ht_travaux);
         details.note_matt = data.note_matt_travaux;
         details.notes = data.notes_travaux;
         data.observations = JSON.stringify(details);
-        ["annee_cible","localisation_travaux","devis_ht_travaux","notes_travaux","note_matt_travaux","origine_travaux","planification_travaux","rubrique_travaux","categorie_entretien","frequence_entretien","budget_entretien","exclure_budget_entretien"].forEach(k => delete data[k]);
+        ["annee_cible","localisation_travaux","devis_ht_travaux","notes_travaux","note_matt_travaux","origine_travaux","rubrique_travaux","categorie_entretien","frequence_entretien","budget_entretien","exclure_budget_entretien"].forEach(k => delete data[k]);
         data.local_id = data.local_id || null;
         data.date_prevue = data.date_prevue || null;
         data.date_realisation = data.date_realisation || null;
