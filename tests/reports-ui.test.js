@@ -44,7 +44,7 @@ async function run(viewport) {
     const records = await page.evaluate(() => JSON.parse(localStorage.getItem("ruvelon_v3_documents")));
     const report = records.find(r => r.categorie === "compte_rendu");
     assert.equal(report.url, "data:application/pdf;base64," + pdf.toString("base64"));
-    assert.equal(records.filter(r => JSON.parse(r.observations).report_id === report.id).length, 2);
+    assert.equal(await page.evaluate(id => JSON.parse(localStorage.getItem("ruvelon_v3_contributions")).filter(r=>r.report_id===id).length,report.id),2);
     assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-comptes-rendus-${viewport.width}.png`) });
     await page.evaluate(url => {
@@ -68,12 +68,66 @@ async function run(viewport) {
   } finally { await browser.close(); }
 }
 
+async function runReader() {
+  const browser = await chromium.launch({headless:true,executablePath:process.env.CHROME_PATH});
+  try {
+    const page = await browser.newPage({viewport:{width:390,height:844},serviceWorkers:"block"});
+    const email = "matthieu.lonchamp@gmail.com";
+    const report = {id:"report",nom_fichier:"reunion.pdf",categorie:"compte_rendu",observations:JSON.stringify({title:"Réunion",date:"2026-11-07"})};
+    const inserts = [];
+    await page.exposeFunction("recordContribution", payload => { inserts.push(payload); });
+    await page.route("**/config.js", route=>route.fulfill({contentType:"text/javascript",body:`window.SCI_RUVELON_CONFIG={supabaseUrl:"https://example.test",supabaseAnonKey:"test",readonlyEmail:${JSON.stringify(email)}};`}));
+    await page.route("**/supabase-js@2",route=>route.fulfill({contentType:"text/javascript",body:`
+      const rows = [];
+      const email = ${JSON.stringify(email)};
+      window.supabase={createClient:()=>({
+        auth:{getSession:async()=>({data:{session:{user:{email}}}})},
+        from(table){
+          const result = ()=>({data:table==="documents"?[${JSON.stringify(report)}]:table==="contributions"?rows:[]});
+          const q={select:()=>q,eq:()=>q,in:()=>q,order:()=>q,
+            maybeSingle:async()=>({data:{email,nom:"Matthieu Lonchamp",role:"lecture",actif:true}}),
+            then:(resolve,reject)=>Promise.resolve(result()).then(resolve,reject),
+            insert:async payload=>{
+              if(table!=="contributions") throw Error("Écriture inattendue");
+              await window.recordContribution(payload);
+              rows.push({...payload,author_email:email,created_at:"2026-11-12T12:00:00Z"});
+              return {};
+            }};
+          return q;
+        }
+      })};`}));
+    await page.goto("http://127.0.0.1:8796",{waitUntil:"networkidle"});
+    await page.locator('[data-route="travaux"]').click();
+    assert.equal(await page.getByRole("button",{name:"Ajouter",exact:true}).count(),0);
+    await page.evaluate(()=>App.openTravaux());
+    assert.equal(await page.locator("#modal").isVisible(),false);
+    await page.locator('[data-route="comptes-rendus"]').click();
+    assert.equal(await page.getByRole("button",{name:"Ajouter un compte rendu"}).count(),0);
+    await page.locator(".report-row").click();
+    await page.getByRole("button",{name:"Ajouter une annotation"}).click();
+    await page.getByLabel("Annotation",{exact:true}).fill("Annotation de test");
+    await page.getByRole("button",{name:"Enregistrer",exact:true}).click();
+    await page.getByText("Annotation de test",{exact:true}).waitFor();
+    await page.locator('[data-route="notes"]').click();
+    await page.getByRole("button",{name:"Déposer une note"}).click();
+    await page.getByLabel("Titre",{exact:true}).fill("Note test");
+    await page.getByLabel("Note",{exact:true}).fill("Point à suivre.");
+    await page.getByRole("button",{name:"Enregistrer",exact:true}).click();
+    await page.getByText("Point à suivre.",{exact:true}).waitFor();
+    assert.match(await page.locator(".report-note").innerText(),/Matthieu Lonchamp/);
+    assert.doesNotMatch(await page.locator("#screen").innerText(),/Annotation de test/);
+    assert.deepEqual(inserts,[{report_id:"report",title:"",body:"Annotation de test"},{report_id:null,title:"Note test",body:"Point à suivre."}]);
+    assert.equal(await page.locator("#screen").evaluate(e=>e.scrollWidth>e.clientWidth+1),false);
+  } finally { await browser.close(); }
+}
+
 (async () => {
   const server = spawn(process.execPath, ["dev-server.js"], { env: { ...process.env, PORT: "8796" } });
   try {
     await new Promise((resolve, reject) => { server.stdout.once("data", resolve); server.once("error", reject); });
     await run({ width: 1440, height: 900 });
     await run({ width: 390, height: 844 });
+    await runReader();
     console.log("OK - PDF comptes rendus et baux, annotations, persistance desktop/mobile");
   } finally { server.kill(); }
 })().catch(e => { console.error(e); process.exitCode = 1; });

@@ -5,6 +5,7 @@
   const PERSONAL_VEHICLE_COST_PER_KM = 0.47;
   const REPORT_CATEGORY = "compte_rendu";
   const REPORT_NOTE_CATEGORY = "annotation_compte_rendu";
+  const CONTRIBUTOR_EMAIL = "matthieu.lonchamp@gmail.com";
   const ENERGY_CATEGORY = "depense_energie";
   const ENERGY_METERS_CATEGORY = "compteurs_energie";
   const MAINTENANCE_BUDGET_CATEGORY = "depense_entretien";
@@ -34,6 +35,9 @@
     reportId: "",
     reportsLoading: false,
     reportsError: "",
+    contributions: [],
+    contributionsError: "",
+    contributionsLoading: false,
     annualLedgers: Object.fromEntries(["energie","entretien"].map(kind=>[kind,{records:[],year:currentMonth().slice(0,4),loading:false,error:""}])),
     user: null,
     profile: null,
@@ -226,6 +230,11 @@
     return state.isAdmin ? html : "";
   }
 
+  function canContribute() {
+    return state.isAdmin || (state.profile?.actif && state.profile.role === "lecture" &&
+      state.profile.email === CONTRIBUTOR_EMAIL);
+  }
+
   function ensureAdminAction() {
     if (state.isAdmin) return true;
     toast("Lecture seule: action non autorisee.");
@@ -344,11 +353,11 @@
   }
 
   async function startApp() {
-    $("#login").hidden = true;
-    $("#app").hidden = false;
     await loadCurrentProfile();
     updateUserChrome();
     await loadAll();
+    $("#login").hidden = true;
+    $("#app").hidden = false;
     setupNav();
     render();
     notifyDeadlines();
@@ -381,6 +390,7 @@
     if (state.route === "etudes") screen.innerHTML = renderEtudes();
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
+    if (state.route === "notes") screen.innerHTML = renderNotes();
     if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie"); }
     if (state.route === "plus") screen.innerHTML = renderPlus();
   }
@@ -668,6 +678,7 @@
     if (state.route === "comptes-rendus") render();
     try {
       state.reportRecords = await dbDocumentMetadata([REPORT_CATEGORY,REPORT_NOTE_CATEGORY]);
+      await loadContributions();
     } catch (error) {
       state.reportsError = "Impossible de charger les comptes rendus : " + (error.message || error);
     } finally {
@@ -777,6 +788,38 @@
     return state.reportRecords.find(r => r.id === id && r.categorie === REPORT_CATEGORY);
   }
 
+  async function loadContributions() {
+    state.contributionsError = "";
+    try { state.contributions = await dbList("contributions"); }
+    catch (error) { state.contributionsError = "Les notes et annotations récentes sont indisponibles."; }
+  }
+
+  function contributionAuthor(email) {
+    if (email === CONTRIBUTOR_EMAIL) return "Matthieu Lonchamp";
+    if (email === cfg.adminEmail || email === "local") return "Michel Bidal";
+    return email;
+  }
+
+  function contributionHtml(row) {
+    return `<article class="report-note">${row.title ? `<strong>${escapeHtml(row.title)}</strong>` : ""}<div class="table-sub">${escapeHtml(row.author)} · ${escapeHtml(fmtDate(row.created_at))}</div><p>${escapeHtml(row.body)}</p></article>`;
+  }
+
+  function reportAnnotations(id) {
+    const legacy = state.reportRecords.filter(n=>n.categorie===REPORT_NOTE_CATEGORY && reportDetails(n).report_id===id)
+      .map(n=>({...n,author:reportDetails(n).author,body:reportDetails(n).text}));
+    const recent = state.contributions.filter(n=>n.report_id===id).map(n=>({...n,author:contributionAuthor(n.author_email)}));
+    return [...legacy,...recent].sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+  }
+
+  function renderNotes() {
+    setTitle("Notes");
+    const notes = state.contributions.filter(n=>!n.report_id).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
+    const body = state.contributionsLoading ? '<div class="empty">Chargement des notes…</div>'
+      : state.contributionsError ? `<div class="notice danger">${escapeHtml(state.contributionsError)}</div>`
+      : notes.length ? notes.map(n=>contributionHtml({...n,author:contributionAuthor(n.author_email)})).join("") : '<div class="empty">Aucune note déposée</div>';
+    return `<section class="desktop-wrap panel reports-panel"><div class="panel-head"><h3>Notes partagées</h3>${canContribute() && !state.contributionsLoading && !state.contributionsError?'<button class="primary" onclick="App.openContribution()">Déposer une note</button>':""}</div><div class="list">${body}</div></section>`;
+  }
+
   function renderReports() {
     setTitle("Comptes rendus");
     const rows = state.reportRecords.filter(r => r.categorie === REPORT_CATEGORY)
@@ -788,24 +831,21 @@
       <div class="panel-head"><h3>Comptes rendus</h3>${adminHtml('<button class="primary" onclick="App.openReportForm()">Ajouter un compte rendu</button>')}</div>
       <div class="list">${rows.length ? rows.map(r => {
         const d = reportDetails(r);
-        const count = state.reportRecords.filter(n => n.categorie === REPORT_NOTE_CATEGORY && reportDetails(n).report_id === r.id).length;
+        const count = reportAnnotations(r.id).length;
         return `<button class="report-row" onclick="App.viewReport('${escapeHtml(r.id)}')"><span><strong>${escapeHtml(d.title || r.nom_fichier)}</strong><small>${escapeHtml(fmtDate(d.date))} · PDF</small></span><span class="report-count">${count} annotation${count===1?"":"s"} <b aria-hidden="true">›</b></span></button>`;
       }).join("") : '<div class="empty">Aucun compte rendu</div>'}</div>
     </section>`;
     const d = reportDetails(report);
     const id = escapeHtml(report.id);
-    const notes = state.reportRecords.filter(n => n.categorie === REPORT_NOTE_CATEGORY && reportDetails(n).report_id === report.id).sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
+    const notes = reportAnnotations(report.id);
     return `<div class="desktop-wrap">
       <button class="table-action" onclick="App.viewReport('')">← Comptes rendus</button>
       <section class="panel reports-panel">
         <div class="panel-head"><div><h3>${escapeHtml(d.title || report.nom_fichier)}</h3><div class="table-sub">${escapeHtml(fmtDate(d.date))} · PDF</div></div><button class="secondary" onclick="App.downloadReport('${id}',this)">Télécharger le PDF</button></div>
       </section>
       <section class="panel reports-panel">
-        <div class="panel-head"><h3>Annotations</h3>${adminHtml(`<button class="primary" onclick="App.openReportNote('${id}')">Ajouter une annotation</button>`)}</div>
-        <div class="list">${notes.length ? notes.map(n => {
-          const note = reportDetails(n);
-          return `<article class="report-note"><div class="table-sub">${escapeHtml(note.author || "")} · ${escapeHtml(fmtDate(n.created_at))}</div><p>${escapeHtml(note.text)}</p></article>`;
-        }).join("") : '<div class="empty">Aucune annotation</div>'}</div>
+        <div class="panel-head"><h3>Annotations</h3>${canContribute() && !state.contributionsError?`<button class="primary" onclick="App.openContribution('${id}')">Ajouter une annotation</button>`:""}</div>
+        <div class="list">${state.contributionsError?`<div class="notice danger">${escapeHtml(state.contributionsError)}</div>`:""}${notes.length ? notes.map(contributionHtml).join("") : '<div class="empty">Aucune annotation</div>'}</div>
       </section>
     </div>`;
   }
@@ -1427,6 +1467,7 @@
         if (action === "saveRemuneration") await window.App.saveRemuneration(form);
         else if (action === "savePassword") await window.App.savePassword(form);
         else if (action === "saveReport") await window.App.saveReport(form);
+        else if (action === "saveContribution") await window.App.saveContribution(form);
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
         else if (action === "saveEtude") await window.App.saveEtude(form);
         else if (action === "saveWorkReport") await window.App.saveWorkReport(form);
@@ -1686,6 +1727,11 @@
     go(route) {
       state.route = route;
       if (route === "comptes-rendus") { state.reportId = ""; return loadReportRecords(); }
+      if (route === "notes") {
+        state.contributionsLoading = true;
+        render();
+        return loadContributions().finally(()=>{ state.contributionsLoading = false; if (state.route==="notes") render(); });
+      }
       if (route === "energie" || route === "entretien") return loadAnnualRecords(route);
       render();
     },
@@ -1775,13 +1821,39 @@
         <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
       </form>`);
     },
-    openReportNote(id) {
-      if (!ensureAdminAction() || !findReport(id)) return;
-      openModal("Ajouter une annotation", `<form data-action="saveReport" class="form-grid">
-        <input type="hidden" name="report_id" value="${escapeHtml(id)}">
-        <label class="field-full">Annotation<textarea name="text" rows="5" required maxlength="5000"></textarea></label>
+    openContribution(id) {
+      if (!canContribute() || (id && !findReport(id))) return;
+      openModal(id ? "Ajouter une annotation" : "Déposer une note", `<form data-action="saveContribution" class="form-grid">
+        <input type="hidden" name="report_id" value="${escapeHtml(id || "")}">
+        ${id?"":'<label class="field-full">Titre<input name="title" required maxlength="160"></label>'}
+        <label class="field-full">${id?"Annotation":"Note"}<textarea name="body" rows="5" required maxlength="5000"></textarea></label>
         <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
       </form>`);
+    },
+    async saveContribution(form) {
+      if (!canContribute() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = new FormData(form);
+        const report_id = data.get("report_id") || null;
+        const title = String(data.get("title") || "").trim();
+        const body = String(data.get("body") || "").trim();
+        if (!body || body.length>5000 || (report_id ? !findReport(report_id) || title!=="" : !title || title.length>160)) throw new Error("Saisissez une contribution valide.");
+        const payload = {report_id,title,body};
+        if (sb) {
+          const {error} = await sb.from("contributions").insert(payload);
+          if (error) throw error;
+        } else {
+          await dbSave("contributions",{...payload,author_email:state.profile.email});
+        }
+        closeModal();
+        await loadContributions();
+        render();
+        toast(report_id ? "Annotation enregistrée" : "Note déposée");
+      } catch (error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
     },
     async saveReport(form) {
       if (!ensureAdminAction() || !form.reportValidity()) return;
@@ -1790,22 +1862,14 @@
       submit.disabled = true;
       try {
         const data = new FormData(form);
-        const reportId = data.get("report_id");
-        if (reportId) {
-          const report = findReport(reportId);
-          const text = String(data.get("text") || "").trim();
-          if (!report || !text || text.length > 5000) throw new Error("Saisissez une annotation valide.");
-          await dbSave("documents", { nom_fichier: "Annotation", categorie: REPORT_NOTE_CATEGORY, url: "", observations: JSON.stringify({report_id: report.id, text, author: state.profile?.nom || state.user?.email || ""}) });
-        } else {
-          const title = String(data.get("title") || "").trim();
-          if (!title || title.length > 160) throw new Error("Saisissez un titre valide.");
-          const file = data.get("pdf");
-          const url = await readReportPdf(file);
-          await dbSave("documents", { nom_fichier: file.name, categorie: REPORT_CATEGORY, url, observations: JSON.stringify({title,date:data.get("date")}) });
-        }
+        const title = String(data.get("title") || "").trim();
+        if (!title || title.length > 160) throw new Error("Saisissez un titre valide.");
+        const file = data.get("pdf");
+        const url = await readReportPdf(file);
+        await dbSave("documents", { nom_fichier: file.name, categorie: REPORT_CATEGORY, url, observations: JSON.stringify({title,date:data.get("date")}) });
         closeModal();
         await loadReportRecords();
-        toast(reportId ? "Annotation enregistrée" : "Compte rendu enregistré");
+        toast("Compte rendu enregistré");
       } catch (error) { toast(error.message || "Enregistrement impossible."); }
       finally { submit.disabled = false; }
     },
