@@ -21,6 +21,8 @@ alter table public.contributions enable row level security;
 revoke all on public.contributions from public, anon, authenticated;
 grant select on public.contributions to authenticated;
 grant insert (report_id, title, body) on public.contributions to authenticated;
+grant update (title, body) on public.contributions to authenticated;
+grant delete on public.contributions to authenticated;
 
 drop policy if exists contributions_read on public.contributions;
 create policy contributions_read on public.contributions for select to authenticated
@@ -36,6 +38,27 @@ create policy contributions_add on public.contributions for insert to authentica
       select 1 from public.documents d
       where d.id = report_id and d.categorie = 'compte_rendu'
     ))
+  );
+
+drop policy if exists contributions_edit_note on public.contributions;
+create policy contributions_edit_note on public.contributions for update to authenticated
+  using (
+    (select public.ruvelon_is_authorized())
+    and report_id is null
+    and ((select public.ruvelon_is_admin()) or author_email = (select public.ruvelon_current_email()))
+  )
+  with check (
+    (select public.ruvelon_is_authorized())
+    and report_id is null
+    and ((select public.ruvelon_is_admin()) or author_email = (select public.ruvelon_current_email()))
+  );
+
+drop policy if exists contributions_delete_note on public.contributions;
+create policy contributions_delete_note on public.contributions for delete to authenticated
+  using (
+    (select public.ruvelon_is_authorized())
+    and report_id is null
+    and ((select public.ruvelon_is_admin()) or author_email = (select public.ruvelon_current_email()))
   );
 
 commit;

@@ -243,6 +243,12 @@
       state.profile.email === CONTRIBUTOR_EMAIL);
   }
 
+  function canManageContribution(row) {
+    if (!row || row.report_id || !canContribute()) return false;
+    return state.isAdmin || String(row.author_email || "").toLowerCase() ===
+      String(state.profile?.email || "").toLowerCase();
+  }
+
   function ensureAdminAction() {
     if (state.isAdmin) return true;
     toast("Lecture seule: action non autorisee.");
@@ -905,8 +911,8 @@
     return email;
   }
 
-  function contributionHtml(row) {
-    return `<article class="report-note">${row.title ? `<strong>${escapeHtml(row.title)}</strong>` : ""}<div class="table-sub">${escapeHtml(row.author)} · ${escapeHtml(fmtDate(row.created_at))}</div><p>${escapeHtml(row.body)}</p></article>`;
+  function contributionHtml(row, actions = "") {
+    return `<article class="report-note">${row.title ? `<strong>${escapeHtml(row.title)}</strong>` : ""}<div class="table-sub">${escapeHtml(row.author)} · ${escapeHtml(fmtDate(row.created_at))}</div><p>${escapeHtml(row.body)}</p>${actions}</article>`;
   }
 
   function reportAnnotations(id) {
@@ -921,7 +927,12 @@
     const notes = state.contributions.filter(n=>!n.report_id).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
     const body = state.contributionsLoading ? '<div class="empty">Chargement des notes…</div>'
       : state.contributionsError ? `<div class="notice danger">${escapeHtml(state.contributionsError)}</div>`
-      : notes.length ? notes.map(n=>contributionHtml({...n,author:contributionAuthor(n.author_email)})).join("") : '<div class="empty">Aucune note déposée</div>';
+      : notes.length ? notes.map(n=>{
+        const actions = canManageContribution(n)
+          ? `<div class="actions"><button class="table-action" onclick="App.openContribution('', '${escapeHtml(n.id)}')">Modifier</button><button class="danger" onclick="App.deleteContribution('${escapeHtml(n.id)}')">Supprimer</button></div>`
+          : "";
+        return contributionHtml({...n,author:contributionAuthor(n.author_email)},actions);
+      }).join("") : '<div class="empty">Aucune note déposée</div>';
     return `<section class="desktop-wrap panel reports-panel"><div class="panel-head"><h3>Notes partagées</h3>${canContribute() && !state.contributionsLoading && !state.contributionsError?'<button class="primary" onclick="App.openContribution()">Déposer une note</button>':""}</div><div class="list">${body}</div></section>`;
   }
 
@@ -1449,7 +1460,7 @@
     return `
       <div class="panel">
         <div class="panel-head"><h3>Suivi remuneration gerant</h3>${adminHtml(`<button class="primary" onclick="App.openRemuneration()">Saisir un mois</button>`)}</div>
-        <div class="toolbar"><input type="number" value="${state.year}" onchange="App.setYear(this.value)">${adminHtml(`<button class="secondary" onclick="App.prepareRemunerationYear()">Creer mois</button>`)}</div>
+        <div class="toolbar"><input type="number" value="${state.year}" onchange="App.setYear(this.value)">${adminHtml(`<button class="secondary" onclick="App.prepareRemunerationYear()">Creer mois</button><button class="primary" onclick="App.exportKilometresPdf()">Justificatif km PDF</button>`)}</div>
         <div class="cards remuneration-cards">
           <div class="card"><small>HT encaisse</small><strong>${euro(ht)}</strong></div>
           <div class="card"><small>Rémunération nette de base · hors primes et km</small><strong>${euro(net)}</strong><span>70 % de la rémunération brute</span></div>
@@ -2201,12 +2212,15 @@
         <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
       </form>`);
     },
-    openContribution(id) {
-      if (!canContribute() || (id && !findReport(id))) return;
-      openModal(id ? "Ajouter une annotation" : "Déposer une note", `<form data-action="saveContribution" class="form-grid">
+    openContribution(id, editId) {
+      const row = editId ? state.contributions.find(n => n.id === editId && !n.report_id) : null;
+      if (editId && !canManageContribution(row)) return toast("Vous ne pouvez modifier que vos propres notes.");
+      if (!editId && (!canContribute() || (id && !findReport(id)))) return;
+      openModal(editId ? "Modifier la note" : id ? "Ajouter une annotation" : "Déposer une note", `<form data-action="saveContribution" class="form-grid">
+        <input type="hidden" name="id" value="${escapeHtml(row?.id || "")}">
         <input type="hidden" name="report_id" value="${escapeHtml(id || "")}">
-        ${id?"":'<label class="field-full">Titre<input name="title" required maxlength="160"></label>'}
-        <label class="field-full">${id?"Annotation":"Note"}<textarea name="body" rows="5" required maxlength="5000"></textarea></label>
+        ${id?"":`<label class="field-full">Titre<input name="title" required maxlength="160" value="${escapeHtml(row?.title || "")}"></label>`}
+        <label class="field-full">${id?"Annotation":"Note"}<textarea name="body" rows="5" required maxlength="5000">${escapeHtml(row?.body || "")}</textarea></label>
         <div class="form-actions"><button type="button" class="secondary" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div>
       </form>`);
     },
@@ -2217,23 +2231,55 @@
       submit.disabled = true;
       try {
         const data = new FormData(form);
+        const id = String(data.get("id") || "");
         const report_id = data.get("report_id") || null;
         const title = String(data.get("title") || "").trim();
         const body = String(data.get("body") || "").trim();
         if (!body || body.length>5000 || (report_id ? !findReport(report_id) || title!=="" : !title || title.length>160)) throw new Error("Saisissez une contribution valide.");
-        const payload = {report_id,title,body};
-        if (sb) {
-          const {error} = await sb.from("contributions").insert(payload);
-          if (error) throw error;
+        if (id) {
+          const existing = state.contributions.find(n => n.id === id && !n.report_id);
+          if (!canManageContribution(existing) || report_id) throw new Error("Vous ne pouvez modifier que vos propres notes.");
+          if (sb) {
+            const {data:updated,error} = await sb.from("contributions").update({title,body}).eq("id",id).select("id").maybeSingle();
+            if (error) throw error;
+            if (!updated) throw new Error("Modification refusée par les droits de la base.");
+          } else {
+            localWrite("contributions",localRead("contributions").map(n=>n.id===id?{...n,title,body}:n));
+          }
         } else {
-          await dbSave("contributions",{...payload,author_email:state.profile.email});
+          const payload = {report_id,title,body};
+          if (sb) {
+            const {error} = await sb.from("contributions").insert(payload);
+            if (error) throw error;
+          } else {
+            const rows=localRead("contributions");
+            rows.push({...payload,id:uid(),author_email:state.profile.email,created_at:new Date().toISOString()});
+            localWrite("contributions",rows);
+          }
         }
         closeModal();
         await loadContributions();
         render();
-        toast(report_id ? "Annotation enregistrée" : "Note déposée");
+        toast(id ? "Note modifiée" : report_id ? "Annotation enregistrée" : "Note déposée");
       } catch (error) { toast(error.message || "Enregistrement impossible."); }
       finally { submit.disabled = false; }
+    },
+    async deleteContribution(id) {
+      const row = state.contributions.find(n => n.id === id && !n.report_id);
+      if (!canManageContribution(row)) return toast("Vous ne pouvez supprimer que vos propres notes.");
+      if (!confirm("Supprimer définitivement cette note ?")) return;
+      try {
+        if (sb) {
+          const {data:deleted,error} = await sb.from("contributions").delete().eq("id",id).select("id");
+          if (error) throw error;
+          if (!deleted?.length) throw new Error("Suppression refusée par les droits de la base.");
+        } else {
+          localWrite("contributions",localRead("contributions").filter(n=>n.id!==id));
+        }
+        await loadContributions();
+        render();
+        toast("Note supprimée");
+      } catch (error) { toast(error.message || "Suppression impossible."); }
     },
     async saveReport(form) {
       if (!ensureAdminAction() || !form.reportValidity()) return;
@@ -2679,6 +2725,68 @@
         || { mois: requestedMonth, bareme_km: 0.636, autres_frais_inclus_total: state.year !== "2026", prime_responsabilite: 0 };
       openModal(`Remuneration - ${monthLabel(r.mois)}`, remunerationFormHtml(r));
       this.recalcRemunerationForm(document.getElementById("edit-form"));
+    },
+    exportKilometresPdf() {
+      if (!ensureAdminAction()) return;
+      const year = String(state.year);
+      const trips = state.data.remuneration_gerant
+        .filter(row => String(row.annee) === year)
+        .flatMap(row => parseRemunerationDetails(row).interventions.map(line => ({
+          date: String(line.date || "").slice(0, 10),
+          month: String(row.mois || "").slice(0, 7),
+          activity: line.activite || "Intervention de gestion",
+          reason: line.motif_deplacement === "visite" ? "Visite de local" : "Intervention SCI",
+          local: line.local || "",
+          km: numberValue(line.km),
+          rate: Number(row.bareme_km) || 0.636,
+          excluded: line.non_facturable === true || line.motif_deplacement === "visite"
+        })))
+        .filter(trip => trip.km > 0 && !trip.excluded)
+        .sort((a, b) => a.date.localeCompare(b.date) || a.month.localeCompare(b.month));
+
+      if (!trips.length) return toast(`Aucun déplacement remboursable par la SCI en ${year}.`);
+      const pdfEuro = value => new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(Number(value) || 0);
+      const totalKm = round2(trips.reduce((total, trip) => total + trip.km, 0));
+      const totalAmount = round2(trips.reduce((total, trip) => total + round2(trip.km * trip.rate), 0));
+      const monthlyTotals = new Map();
+      trips.forEach(trip => {
+        const current = monthlyTotals.get(trip.month) || { km: 0, amount: 0 };
+        current.km += trip.km;
+        current.amount += round2(trip.km * trip.rate);
+        monthlyTotals.set(trip.month, current);
+      });
+      const monthlyRows = [...monthlyTotals.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([month, values]) =>
+        `<tr><td>${escapeHtml(monthLabel(`${month}-01`))}</td><td class="num">${values.km.toFixed(1)} km</td><td class="num">${pdfEuro(round2(values.amount))}</td></tr>`
+      ).join("");
+      const detailRows = trips.map((trip, index) =>
+        `<tr><td>${index + 1}</td><td>${escapeHtml(fmtDate(trip.date) || monthLabel(`${trip.month}-01`))}</td><td>${escapeHtml(trip.activity)}</td><td>${escapeHtml(trip.reason)}</td><td>${escapeHtml(trip.local || "—")}</td><td class="num">${trip.km.toFixed(1)}</td><td class="num">${pdfEuro(trip.rate)}</td><td class="num">${pdfEuro(round2(trip.km * trip.rate))}</td></tr>`
+      ).join("");
+      const printWindow = window.open("", "_blank");
+      if (!printWindow) return toast("Autorisez les fenêtres pop-up pour générer le justificatif.");
+      const html = `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Justificatif_frais_kilometriques_${year}</title>
+        <style>
+          *{box-sizing:border-box}body{font:13px Arial,sans-serif;color:#202b36;margin:32px auto;max-width:1000px;padding:0 22px}
+          h1{font-size:22px;color:#17395d;margin:0 0 6px}h2{font-size:15px;color:#17395d;margin:26px 0 8px}
+          .sub{color:#5d6b78;margin:0 0 22px}.identity{border:1px solid #cbd5df;padding:12px;margin:16px 0;line-height:1.7}
+          .totals{display:flex;gap:12px;margin:16px 0}.total{flex:1;border:1px solid #cbd5df;padding:12px}.total b{display:block;font-size:18px;color:#17395d;margin-top:5px}
+          table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #cbd5df;padding:7px;text-align:left;vertical-align:top}th{background:#edf3f8;color:#17395d}
+          .num{text-align:right;white-space:nowrap}.note{margin-top:12px;color:#5d6b78;font-size:11px}.signature{margin-top:42px;display:grid;grid-template-columns:1fr 1fr;gap:40px}
+          .signature div{border-top:1px solid #8996a3;padding-top:8px}.actions{margin-bottom:18px}.actions button{padding:9px 14px;border:0;background:#17395d;color:white;border-radius:5px;cursor:pointer}
+          @page{size:A4 landscape;margin:12mm}@media print{body{max-width:none;margin:0;padding:0}.actions{display:none}tr{break-inside:avoid}}
+        </style></head><body>
+        <div class="actions"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
+        <h1>SCI RUVELON — Justificatif de frais kilométriques</h1><p class="sub">Exercice ${escapeHtml(year)} · Établi le ${escapeHtml(fmtDate(today()))}</p>
+        <div class="identity"><b>Gestionnaire :</b> Michel Bidal<br><b>Objet :</b> déplacements professionnels réalisés pour la SCI RUVELON<br><b>Base de calcul :</b> kilomètres aller-retour × barème indiqué dans le suivi mensuel.</div>
+        <div class="totals"><div class="total">Kilomètres remboursables<b>${totalKm.toFixed(1)} km</b></div><div class="total">Total des frais kilométriques<b>${pdfEuro(totalAmount)}</b></div></div>
+        <h2>Récapitulatif mensuel</h2><table><thead><tr><th>Mois</th><th class="num">Kilomètres</th><th class="num">Frais calculés</th></tr></thead><tbody>${monthlyRows}</tbody><tfoot><tr><th>Total ${escapeHtml(year)}</th><th class="num">${totalKm.toFixed(1)} km</th><th class="num">${pdfEuro(totalAmount)}</th></tr></tfoot></table>
+        <h2>Détail des déplacements remboursables</h2><table><thead><tr><th>N°</th><th>Date</th><th>Activité</th><th>Motif</th><th>Local / destination</th><th class="num">Km A/R</th><th class="num">Barème / km</th><th class="num">Montant</th></tr></thead><tbody>${detailRows}</tbody><tfoot><tr><th colspan="5">Total ${escapeHtml(year)}</th><th class="num">${totalKm.toFixed(1)}</th><th></th><th class="num">${pdfEuro(totalAmount)}</th></tr></tfoot></table>
+        <p class="note">Les visites de locaux et les déplacements déclarés non facturables à la SCI sont exclus de ce justificatif. Les montants sont calculés à partir des kilomètres et barèmes enregistrés dans l’outil ; ce document est un état de suivi à transmettre au comptable, et non une facture.</p>
+        <div class="signature"><div>Signature du gestionnaire<br>Michel Bidal</div><div>Visa / contrôle comptable</div></div>
+        </body></html>`;
+      printWindow.document.open();
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.focus();
     },
     async prepareRemunerationYear() {
       if (!ensureAdminAction()) return;
