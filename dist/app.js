@@ -1074,7 +1074,7 @@
     setTitle("Études");
     const query = state.etudeRecherche.toLocaleLowerCase("fr");
     const rows = state.data.travaux.map(t=>({...t,detail:travauxDetails(t)}))
-      .filter(t=>t.detail.rubrique==="etude" && [t.titre,t.description,t.detail.localisation,t.detail.etude_observations].join(" ").toLocaleLowerCase("fr").includes(query))
+      .filter(t=>t.detail.rubrique==="etude" && !t.detail.etude_travaux_id && [t.titre,t.description,t.detail.localisation,t.detail.etude_observations].join(" ").toLocaleLowerCase("fr").includes(query))
       .sort((a,b)=>String(a.detail.etude_fin || "9999").localeCompare(String(b.detail.etude_fin || "9999")) || a.titre.localeCompare(b.titre,"fr"));
     const amount = value => value == null ? "Non renseigné" : euro(value)+" HT";
     return `<section class="desktop-wrap panel works-panel etudes-panel">
@@ -1082,11 +1082,9 @@
       <div class="toolbar"><input type="search" aria-label="Rechercher une étude" placeholder="Rechercher une étude" value="${escapeHtml(state.etudeRecherche)}" onchange="App.filterEtudes(this.value)"></div>
       <div class="list">${rows.length ? rows.map(t=>{
         const d=t.detail;
-        const linked=state.data.travaux.find(w=>w.id===d.etude_travaux_id);
         return `<article class="row"><div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml([d.localisation || localLabel("locaux",t.local_id),t.entreprise].filter(Boolean).join(" · "))}</div></div><span class="chip">${escapeHtml(t.statut)}</span></div>
           <div><strong>Problématique</strong><div class="row-sub">${escapeHtml(t.description || "À préciser")}</div></div>
           <div class="works-amounts"><span>Période<b>${escapeHtml(etudePeriod(d))}</b></span><span>Coût estimé<b>${d.etude_cout_estime_ht==null && d.etude_cout_indique ? euro(d.etude_cout_indique)+" (HT/TTC à préciser)" : amount(d.etude_cout_estime_ht)}</b></span><span>Coût réel<b>${amount(d.etude_cout_reel_ht)}</b></span></div>
-          ${linked?`<div class="row-sub">Travaux associés : ${escapeHtml(linked.titre)}</div>`:""}
           <details class="works-details"><summary>Observations détaillées</summary><p>${escapeHtml(d.etude_observations || d.notes || "Aucune observation")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}</details>
           ${adminHtml(`<div class="actions"><button onclick="App.openEtude('${t.id}')">Modifier</button></div>`)}
         </article>`;

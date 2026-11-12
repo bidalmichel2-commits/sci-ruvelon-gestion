@@ -172,6 +172,23 @@ async function run(viewport) {
     await page.locator('[data-route="travaux"]').click();
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Diagnostic test|240.50 EUR/);
     assert.match(await page.locator('#screen').innerText(), /Fuite imprévue/);
+    await page.evaluate(() => {
+      const key = 'ruvelon_v3_travaux';
+      const rows = JSON.parse(localStorage.getItem(key));
+      rows.push(
+        {id:'sol',titre:'Reprise sol communs étage',montant_estime:3000,statut:'0 - À chiffrer'},
+        {id:'copie-sol',titre:'Sol commun étage',montant_estime:500,statut:'À étudier',observations:JSON.stringify({version_travaux:1,rubrique:'etude',etude_travaux_id:'sol'})}
+      );
+      localStorage.setItem(key,JSON.stringify(rows));
+    });
+    await page.reload({waitUntil:'networkidle'});
+    await page.getByRole('button',{name:'Mode apercu local'}).click();
+    await page.locator('[data-route="etudes"]').click();
+    assert.match(await page.locator('#screen').innerText(), /Diagnostic test/);
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Sol commun étage|Reprise sol communs étage/);
+    await page.locator('[data-route="travaux"]').click();
+    assert.match(await page.locator('#screen').innerText(), /Reprise sol communs étage/);
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Sol commun étage/);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 }
