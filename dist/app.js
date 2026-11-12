@@ -687,7 +687,7 @@
       const number = String(meters?.[key] || "");
       return [key,title,/^\d{6,18}$/.test(number) ? `${detail} · Compteur n° ${number}` : detail];
     });
-    return {category:ENERGY_CATEGORY,title:"Dépenses énergie",unit:"€",yearLabel:"Année énergie",posts};
+    return {category:ENERGY_CATEGORY,title:"Dépenses énergie",unit:"€ TTC",yearLabel:"Année énergie",posts};
   }
 
   async function loadAnnualRecords(kind) {
@@ -720,6 +720,11 @@
     return byYear;
   }
 
+  function maintenanceTtc(ht, recordedTtc) {
+    if (ht == null) return null;
+    return Number.isFinite(recordedTtc) ? recordedTtc : Math.round(Math.round(ht*100)*6/5)/100;
+  }
+
   function renderAnnualLedger(kind) {
     const ledger = state.annualLedgers[kind];
     const config = annualLedgerConfig(kind);
@@ -731,29 +736,37 @@
     const current = records.get(year);
     const previous = records.get(year-1);
     const format = new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"});
-    const display = amount => amount == null ? "—" : format.format(amount)+(kind==="entretien"?" HT":"");
+    const dual = kind === "entretien";
+    const display = (amount,suffix="") => amount == null ? "—" : format.format(amount)+suffix;
     const amount = (record,key,kind) => {
       const value = record?.posts[key]?.[kind];
       return typeof value === "number" && Number.isFinite(value) ? value : null;
     };
-    const rows = config.posts.map(([key,title,detail])=>({key,title,detail,values:[amount(previous,key,"reel"),amount(current,key,"prevision"),amount(current,key,"reel")]}));
-    const totals = [0,1,2].map(index => rows.some(r=>r.values[index] !== null) ? round2(rows.reduce((s,r)=>s+(r.values[index] ?? 0),0)) : null);
+    const periods = [[previous,"reel"],[current,"prevision"],[current,"reel"]];
+    const rows = config.posts.map(([key,title,detail])=>{
+      const values = periods.map(([record,field])=>amount(record,key,field));
+      const ttc = periods.map(([record,field],index)=>maintenanceTtc(values[index],amount(record,key,field+"_ttc")));
+      return {key,title,detail,values,ttc};
+    });
+    const totalFor = field => [0,1,2].map(index => rows.some(r=>r[field][index] !== null) ? round2(rows.reduce((s,r)=>s+(r[field][index] ?? 0),0)) : null);
+    const totals = {values:totalFor("values"),ttc:totalFor("ttc")};
     const headings = [`Réel ${year-1}`,`Prévision ${year}`,`Réel ${year}`];
-    const valueCells = values => values.map(value=>`<td class="num">${display(value)}</td>`).join("");
-    const mobileValues = values => `<div class="works-amounts">${values.map((value,index)=>`<span>${headings[index]}<b>${display(value)}</b></span>`).join("")}</div>`;
+    const columns = headings.flatMap(h=>dual ? [h+" HT",h+" TTC"] : [h+" TTC"]);
+    const valueCells = ({values,ttc},tag="td") => values.flatMap((v,i)=>dual ? [v,ttc[i]] : [v]).map(v=>`<${tag} class="num">${display(v)}</${tag}>`).join("");
+    const mobileValues = ({values,ttc}) => `<div class="works-amounts">${values.map((value,index)=>`<span>${headings[index]}${dual?"":" TTC"}<b>${display(value,dual?" HT":"")}</b>${dual && value!==null?`<b>${display(ttc[index]," TTC")}</b>`:""}</span>`).join("")}</div>`;
     const postAction = row => {
       const label = row.values[2] === null ? "Saisir le réel" : "Modifier";
       return `<button class="table-action" aria-label="${label} : ${row.title}" onclick="App.openAnnualForm('${kind}',${year},'${row.key}')">${label}</button>`;
     };
     return `<section class="${kind==="energie"?"desktop-wrap":""} panel works-panel annual-ledger ${kind==="entretien"?"entretien-budget":""}">
-      <div class="panel-head"><h3>${config.title}</h3>${adminHtml(`<button class="primary" onclick="App.openAnnualForm('${kind}')">Ajouter une année</button>`)}</div>
+      <div class="panel-head"><div><h3>${config.title}</h3><div class="table-sub">${dual?"HT et TTC · TVA 20 %":"Montants TTC"}</div></div>${adminHtml(`<button class="primary" onclick="App.openAnnualForm('${kind}')">Ajouter une année</button>`)}</div>
       ${current ? `
       <div class="toolbar"><select aria-label="${config.yearLabel}" onchange="App.setAnnualYear('${kind}',this.value)">${years.map(y=>`<option value="${y}" ${y===year?"selected":""}>${y}</option>`).join("")}</select>
       ${adminHtml(`<button class="secondary" onclick="App.openAnnualForm('${kind}',${year})">Modifier ${year}</button>`)}</div>
-      <div class="table-wrap desktop-table"><table class="data-table energy-table"><thead><tr><th>Poste</th>${headings.map(h=>`<th class="num">${h}</th>`).join("")}${adminHtml("<th>Action</th>")}</tr></thead>
-      <tbody>${rows.map(r=>`<tr><td><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</td>${valueCells(r.values)}${adminHtml(`<td>${postAction(r)}</td>`)}</tr>`).join("")}</tbody>
-      <tfoot><tr><th>Total</th>${totals.map(value=>`<th class="num">${display(value)}</th>`).join("")}${adminHtml("<td></td>")}</tr></tfoot></table></div>
-      <div class="list mobile-list"><div class="row"><strong>Total</strong>${mobileValues(totals)}</div>${rows.map(r=>`<div class="row"><div><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</div>${mobileValues(r.values)}${adminHtml(`<div class="actions">${postAction(r)}</div>`)}</div>`).join("")}</div>
+      <div class="table-wrap desktop-table"><table class="data-table energy-table"><thead><tr><th>Poste</th>${columns.map(h=>`<th class="num">${h}</th>`).join("")}${adminHtml("<th>Action</th>")}</tr></thead>
+      <tbody>${rows.map(r=>`<tr><td><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</td>${valueCells(r)}${adminHtml(`<td>${postAction(r)}</td>`)}</tr>`).join("")}</tbody>
+      <tfoot><tr><th>Total</th>${valueCells(totals,"th")}${adminHtml("<td></td>")}</tr></tfoot></table></div>
+      <div class="list mobile-list"><div class="row"><strong>Total</strong>${mobileValues(totals)}</div>${rows.map(r=>`<div class="row"><div><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</div>${mobileValues(r)}${adminHtml(`<div class="actions">${postAction(r)}</div>`)}</div>`).join("")}</div>
       ` : '<div class="empty">Aucune dépense enregistrée</div>'}
     </section>`;
   }
@@ -941,7 +954,7 @@
     const byYear = new Map();
     const unplanned = [];
     const bucket = year => {
-      if (!byYear.has(year)) byYear.set(year, {year, recurring:0, oneOff:0, billed:0, unconfirmed:0});
+      if (!byYear.has(year)) byYear.set(year, {year, recurring:0, oneOff:0, billed:0, billedTtc:0, unconfirmed:0});
       return byYear.get(year);
     };
     for (let year=currentYear; year<=currentYear+2; year++) bucket(year);
@@ -957,7 +970,10 @@
       if (billedYear) bucket(billedYear);
     }
     for (const {t,d,planned,actual,billedYear} of entries) {
-      if (billedYear) bucket(billedYear).billed += actual;
+      if (billedYear) {
+        bucket(billedYear).billed += actual;
+        bucket(billedYear).billedTtc += maintenanceTtc(actual,d.montant_document_ttc);
+      }
       const recurring = entretienFrequences.includes(d.entretien_frequence) && d.entretien_frequence !== "Ponctuel";
       const pending = money(d.budget_indique);
       const estimate = money(t.montant_estime) || money(d.devis_ht);
@@ -993,7 +1009,10 @@
     };
     for (const key of Object.keys(entretienCategories)) {
       const group = rows.filter(t=>(t.detail.entretien_categorie || "autre")===key);
-      for (const row of entretienForecast(group,current).years) put(row.year,key,"reel",row.billed);
+      for (const row of entretienForecast(group,current).years) {
+        put(row.year,key,"reel",row.billed);
+        put(row.year,key,"reel_ttc",row.billedTtc);
+      }
       // Project the original budget independently from invoices and actual spending.
       for (const row of entretienForecast(group.map(t=>({...t,montant_reel:0})),current).years) put(row.year,key,"prevision",row.recurring+row.oneOff);
     }
@@ -1018,14 +1037,15 @@
     const label = t => entretienCategories[t.detail.entretien_categorie] || "À classer";
     const date = t => fmtDate(t.date_prevue) || (t.detail.annee ? `${t.detail.annee} · date à définir` : "À définir");
     const amount = t => Number(t.montant_reel) || (t.detail.devis_ht ?? t.montant_estime);
+    const ttcAmount = t => maintenanceTtc(amount(t),t.montant_reel || t.detail.devis_ht!=null ? t.detail.montant_document_ttc : undefined);
     const place = t => t.detail.localisation || localLabel("locaux", t.local_id);
     const actions = t => adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`);
     return `<div class="desktop-wrap">${renderAnnualLedger("entretien")}${renderEntretienUnassigned(all)}<section class="panel works-panel entretien-details">
       <div class="panel-head"><h3>Suivi de l’entretien</h3>${adminHtml('<button class="primary" onclick="App.openTravaux()">Ajouter</button>')}</div>
       <div class="toolbar"><select aria-label="Catégorie d’entretien" onchange="App.filterTravaux('entretienCategorie',this.value)"><option value="">Toutes les catégories</option>${Object.entries(entretienCategories).map(([key,value]) => `<option value="${key}" ${state.entretienCategorie===key?"selected":""}>${value}</option>`).join("")}</select></div>
-      ${rows.length ? `<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Prestation</th><th>Catégorie / fréquence</th><th>Prestataire</th><th>Date prévue</th><th>Avancement</th><th>Montant HT</th><th>Actions</th></tr></thead><tbody>
-      ${rows.map(t => `<tr><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(place(t))}</div>${travauxNotesHtml(t)}</td><td>${escapeHtml(label(t))}<div class="table-sub">${escapeHtml(t.detail.entretien_frequence || "À définir")}</div></td><td>${escapeHtml(t.entreprise || "—")}</td><td>${escapeHtml(date(t))}</td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(amount(t))}</td><td>${actions(t)}</td></tr>`).join("")}
-      </tbody></table></div><div class="list mobile-list">${rows.map(t => `<div class="row"><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(place(t))}</div><div class="chips"><span class="chip">${escapeHtml(label(t))}</span><span class="chip">${escapeHtml(t.detail.entretien_frequence || "Fréquence à définir")}</span></div><div class="row-sub">Date prévue : ${escapeHtml(date(t))}</div><div>${escapeHtml(t.statut)} · ${euro(amount(t))} HT</div>${travauxNotesHtml(t)}${actions(t)}</div>`).join("")}</div>` : '<div class="empty">Aucune prestation dans cette catégorie</div>'}
+      ${rows.length ? `<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Prestation</th><th>Catégorie / fréquence</th><th>Prestataire</th><th>Date prévue</th><th>Avancement</th><th>Montant HT</th><th>Montant TTC</th><th>Actions</th></tr></thead><tbody>
+      ${rows.map(t => `<tr><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(place(t))}</div>${travauxNotesHtml(t)}</td><td>${escapeHtml(label(t))}<div class="table-sub">${escapeHtml(t.detail.entretien_frequence || "À définir")}</div></td><td>${escapeHtml(t.entreprise || "—")}</td><td>${escapeHtml(date(t))}</td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(amount(t))}</td><td class="num">${euro(ttcAmount(t))}</td><td>${actions(t)}</td></tr>`).join("")}
+      </tbody></table></div><div class="list mobile-list">${rows.map(t => `<div class="row"><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(place(t))}</div><div class="chips"><span class="chip">${escapeHtml(label(t))}</span><span class="chip">${escapeHtml(t.detail.entretien_frequence || "Fréquence à définir")}</span></div><div class="row-sub">Date prévue : ${escapeHtml(date(t))}</div><div>${escapeHtml(t.statut)} · ${euro(amount(t))} HT · ${euro(ttcAmount(t))} TTC</div>${travauxNotesHtml(t)}${actions(t)}</div>`).join("")}</div>` : '<div class="empty">Aucune prestation dans cette catégorie</div>'}
     </section></div>`;
   }
 
@@ -1577,19 +1597,28 @@
       const next = records.size ? Math.max(...records.keys())+1 : Number(currentMonth().slice(0,4));
       const fields = [{type:"number",name:"annee",label:"Année",value:existing ? year : Math.min(next,2100),min:2000,max:2100,step:"1",required:true,readonly:Boolean(existing)}];
       for (const [key,label] of posts) {
-        fields.push(
-          {type:"number",name:key+"_prevision",label:`${label} · Prévision (${config.unit})`,value:existing?.posts[key]?.prevision ?? "",step:"0.01",min:"0"},
-          {type:"number",name:key+"_reel",label:`${label} · Réel (${config.unit})`,value:existing?.posts[key]?.reel ?? "",step:"0.01",min:"0"}
-        );
+        for (const [field,period] of [["prevision","Prévision"],["reel","Réel"]]) {
+          const name = key+"_"+field;
+          const post = existing?.posts[key];
+          fields.push({type:"number",name,label:`${label} · ${period} (${config.unit})`,value:post?.[field] ?? "",step:"0.01",min:"0",
+            oninput:kind==="entretien" ? `App.syncAnnualVat(this,'${name}_ttc',false)` : ""});
+          if (kind==="entretien") fields.push({type:"number",name:name+"_ttc",label:`${label} · ${period} (€ TTC)`,
+            value:maintenanceTtc(post?.[field],post?.[field+"_ttc"]) ?? "",step:"0.01",min:"0",oninput:`App.syncAnnualVat(this,'${name}',true)`});
+        }
       }
       const title = postKey ? `${posts[0][1]} · ${year}` : existing ? `${config.title} ${year}` : "Ajouter une année";
-      openModal(title,formHtml(fields,"documents","saveAnnual"));
+      openModal(kind==="entretien" ? title+" · TVA 20 %" : title,formHtml(fields,"documents","saveAnnual"));
       const form = $("#edit-form");
       form.dataset.annualKind = kind;
       form.dataset.annualYear = existing ? String(year) : "";
       form.dataset.annualId = existing?.id || "";
       form.dataset.annualPost = postKey || "";
-      if (postKey) form.elements[postKey+"_reel"].focus();
+      if (postKey) form.elements[postKey+(kind==="entretien"?"_reel_ttc":"_reel")].focus();
+    },
+    syncAnnualVat(input,target,gross) {
+      const other = input.form.elements[target];
+      const cents = Math.round(input.valueAsNumber*100);
+      other.value = Number.isFinite(cents) && cents >= 0 ? (Math.round(gross?cents*5/6:cents*6/5)/100).toFixed(2) : "";
     },
     async saveAnnual(form) {
       if (!ensureAdminAction() || !form.reportValidity()) return;
@@ -1614,7 +1643,13 @@
         const posts = postKey ? config.posts.filter(([key]) => key === postKey) : config.posts;
         if (!posts.length || (postKey && !current)) throw new Error("Poste introuvable.");
         const postes = {...current?.savedPosts};
-        for (const [key] of posts) postes[key] = {prevision:value(key+"_prevision"),reel:value(key+"_reel")};
+        for (const [key] of posts) {
+          postes[key] = {prevision:value(key+"_prevision"),reel:value(key+"_reel")};
+          if (kind==="entretien") {
+            postes[key].prevision_ttc = value(key+"_prevision_ttc");
+            postes[key].reel_ttc = value(key+"_reel_ttc");
+          }
+        }
         await dbSave("documents",{...(current?.id ? {id:current.id} : {}),nom_fichier:`${config.title} ${annee}`,categorie:config.category,url:"",observations:JSON.stringify({annee,postes})});
         ledger.year = String(annee);
         closeModal();

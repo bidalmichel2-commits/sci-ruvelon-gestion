@@ -32,7 +32,7 @@ async function run(viewport) {
     const screen = page.locator("#screen");
     const content = async () => (await screen.innerText()).replace(/\s/g," ");
     assert.match(await content(),/Réel 2025/i);
-    assert.match(await content(),/Prévision 2026/i);
+    assert.match(await content(),/Prévision 2026 TTC/i);
     assert.match(await content(),/1 150,00 €/);
     assert.match(await content(),/Compteur 1/);
     assert.match(await content(),/RC4, RC5, RC6, RC7 et RC8 · Compteur n° 123456789/);
@@ -41,6 +41,7 @@ async function run(viewport) {
     assert.ok(listing.indexOf("Électricité · Compteur 1") < listing.indexOf("Électricité · Compteur 2"));
     await page.getByRole("button",{name:"Saisir le réel : Eau potable"}).click();
     assert.equal(await page.locator('[name="eau_prevision"]').inputValue(),"100");
+    assert.match(await page.locator('[name="eau_prevision"]').evaluate(e=>e.closest("label").textContent),/€ TTC/);
     assert.equal(await page.locator('[name="eau_reel"]').inputValue(),"");
     assert.equal(await page.locator('[name="compteur_1_reel"]').count(),0);
     await page.locator('[name="eau_reel"]').fill("42.50");
