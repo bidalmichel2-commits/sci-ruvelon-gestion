@@ -306,6 +306,8 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
   line-height: 1.1;
 }
 
+.card > span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+
 .card.green { border-left-color: var(--green); }
 .card.orange { border-left-color: var(--orange); }
 .card.red { border-left-color: var(--red); }

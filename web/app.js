@@ -1452,28 +1452,29 @@
         <div class="toolbar"><input type="number" value="${state.year}" onchange="App.setYear(this.value)">${adminHtml(`<button class="secondary" onclick="App.prepareRemunerationYear()">Creer mois</button>`)}</div>
         <div class="cards remuneration-cards">
           <div class="card"><small>HT encaisse</small><strong>${euro(ht)}</strong></div>
-          <div class="card"><small>Remuneration nette</small><strong>${euro(net)}</strong></div>
-          <div class="card"><small>Primes</small><strong>${euro(primes)}</strong></div>
-          <div class="card"><small>Frais km</small><strong>${euro(fraisKm)}</strong></div>
+          <div class="card"><small>Rémunération nette de base · hors primes et km</small><strong>${euro(net)}</strong><span>70 % de la rémunération brute</span></div>
+          <div class="card"><small>Primes ajoutées au compte courant</small><strong>${euro(primes)}</strong></div>
+          <div class="card"><small>Frais km SCI ajoutés au compte courant</small><strong>${euro(fraisKm)}</strong></div>
           <div class="card orange"><small>Déplacements à ma charge · 0,47 €/km</small><strong>${euro(perso)}</strong><span>${kmPerso.toFixed(1)} km à ma charge</span></div>
           <div class="card"><small>Heures</small><strong>${heures.toFixed(2)}</strong></div>
-          <div class="card green"><small>Compte courant</small><strong>${euro(total)}</strong></div>
+          <div class="card green"><small>Total inscrit au compte courant</small><strong>${euro(total)}</strong><span>Nette de base + primes + frais km SCI${rows.some(r=>r.autres_frais_inclus_total) ? " + autres frais cochés" : ""}</span></div>
         </div>
+        <div class="notice info remuneration-explanation"><strong>À lire :</strong> la rémunération nette affichée est la base après abattement de 30 % ; elle n’inclut ni les primes ni les frais km. Le total du compte courant les ajoute. Les déplacements personnels à 0,47 €/km restent à votre charge et ne sont pas ajoutés. Les autres frais ne sont ajoutés que si leur case est cochée.</div>
         ${String(state.year) === "2026" && autres ? `<div class="notice info">Autres frais 2026 : ${euro(autres)} indiques pour memoire et exclus du compte courant.</div>` : ""}
         <div class="table-wrap desktop-table remuneration-table">
           <table class="data-table">
-            <thead><tr><th>Mois</th><th class="num">HT encaisse</th><th class="num">Brute 7%</th><th class="num">Nette 70%</th><th class="num">Primes</th><th class="num">Frais km</th><th class="num">Autres frais</th><th class="num">Total mois</th><th class="num">Heures</th><th></th></tr></thead>
+            <thead><tr><th>Mois</th><th class="num">HT encaissé</th><th class="num">Brute 7 %</th><th class="num">Nette de base</th><th class="num">Primes ajoutées</th><th class="num">Frais km SCI ajoutés</th><th class="num">Autres frais</th><th class="num">Total compte courant</th><th class="num">Heures</th><th></th></tr></thead>
             <tbody>${rows.map((r) => {
               const values = remunerationMonthValues(r);
               return `<tr>
                 <td><strong>${escapeHtml(monthLabel(r.mois))}</strong></td>
                 <td class="num">${euro(r.encaissements_ht)}</td>
                 <td class="num">${euro(values.brut)}</td>
-                <td class="num">${euro(values.net)}</td>
+                <td class="num">${euro(values.net)}<div class="table-sub">hors primes et km</div></td>
                 <td class="num">${euro(values.primes)}</td>
                 <td class="num">${euro(values.fraisKm)}<div class="table-sub">À ma charge : ${savedTravel(r).kmPerso.toFixed(1)} km · ${euro(savedTravel(r).fraisPerso)}</div></td>
                 <td class="num">${euro(r.autres_frais)}<div class="table-sub">${r.autres_frais_inclus_total ? "inclus" : "hors total"}</div></td>
-                <td class="num"><strong>${euro(values.total)}</strong></td>
+                <td class="num"><strong>${euro(values.total)}</strong><div class="table-sub">nette + primes + km SCI</div></td>
                 <td class="num">${Number(r.heures || 0).toFixed(2)}</td>
                 <td>${adminHtml(`<button class="table-action" onclick="App.openRemuneration('${r.id}')">Detail</button>`)}</td>
               </tr>`;
@@ -1717,17 +1718,17 @@
           <div><small>Encaissements HT</small><strong data-recap="encaissements">0.00 EUR</strong></div>
           <div><small>Total loyers HT du mois</small><strong data-recap="factures_ht">0.00 EUR</strong></div>
           <div><small>Brute 7%</small><strong data-recap="brute">0.00 EUR</strong></div>
-          <div><small>Nette apres abattement</small><strong data-recap="nette">0.00 EUR</strong></div>
+          <div><small>Nette de base après abattement · hors primes et km</small><strong data-recap="nette">0.00 EUR</strong></div>
           <div><small>Heures</small><strong data-recap="heures">0.00</strong></div>
-          <div><small>Frais km</small><strong data-recap="frais_km">0.00 EUR</strong></div>
+          <div><small>Frais km remboursés par la SCI · inclus au total</small><strong data-recap="frais_km">0.00 EUR</strong></div>
           <div><small>Km aller-retour totaux</small><strong data-recap="km_total">0</strong></div>
           <div><small>Km facturables SCI</small><strong data-recap="km_sci">0</strong></div>
           <div><small>Km à ma charge</small><strong data-recap="km_perso">0</strong></div>
-          <div><small>À ma charge · 0,47 €/km</small><strong data-recap="frais_perso">0.00 EUR</strong></div>
-          <div><small>Coût véhicule total estimé · 0,47 €/km</small><strong data-recap="cout_deplacements">0.00 EUR</strong></div>
-          <div><small>Primes</small><strong data-recap="primes">0.00 EUR</strong></div>
-          <div><small>Autres frais</small><strong data-recap="autres">0.00 EUR</strong></div>
-          <div class="recap-total"><small>Compte courant du mois</small><strong data-recap="total">0.00 EUR</strong></div>
+          <div><small>Déplacements personnels · exclus du total</small><strong data-recap="frais_perso">0.00 EUR</strong></div>
+          <div><small>Coût véhicule total estimé · information</small><strong data-recap="cout_deplacements">0.00 EUR</strong></div>
+          <div><small>Primes · ajoutées au compte courant</small><strong data-recap="primes">0.00 EUR</strong></div>
+          <div><small>Autres frais · ajoutés seulement si cochés</small><strong data-recap="autres">0.00 EUR</strong></div>
+          <div class="recap-total"><small>Total porté au compte courant = nette de base + primes + km SCI</small><strong data-recap="total">0.00 EUR</strong></div>
         </div>
         <label class="notice info"><input type="checkbox" name="autres_frais_inclus_total" value="true" ${r.autres_frais_inclus_total ? "checked" : ""} onchange="App.recalcRemunerationForm(this.form)"> Integrer les autres frais au total</label>
       </section>

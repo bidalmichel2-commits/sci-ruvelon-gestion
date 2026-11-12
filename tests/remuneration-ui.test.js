@@ -30,6 +30,11 @@ async function run(viewport) {
   assert.equal(await page.locator('[data-recap="primes"]').innerText(), "400.00 EUR");
   assert.equal(await page.locator('[data-recap="autres"]').innerText(), "25.00 EUR");
   assert.equal(await page.locator('[data-recap="total"]').innerText(), "455.36 EUR");
+  const recapLabels = await page.locator(".recap-section").innerText();
+  assert.match(recapLabels, /Nette de base après abattement · hors primes et km/);
+  assert.match(recapLabels, /Frais km remboursés par la SCI · inclus au total/);
+  assert.match(recapLabels, /Primes · ajoutées au compte courant/);
+  assert.match(recapLabels, /Total porté au compte courant = nette de base \+ primes \+ km SCI/);
 
   const overflow = await page.locator("#modal-body").evaluate((element) => element.scrollWidth > element.clientWidth + 1);
   assert.equal(overflow, false, `Le formulaire deborde horizontalement en ${viewport.width}px`);
