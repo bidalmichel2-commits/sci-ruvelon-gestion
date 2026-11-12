@@ -34,9 +34,10 @@ async function run(viewport) {
     assert.match(await content(),/Prévision 2026/i);
     assert.match(await content(),/1 150,00 €/);
     assert.match(await content(),/Compteur 1/);
-    await page.getByRole("button",{name:"Modifier 2026"}).click();
+    await page.getByRole("button",{name:"Saisir le réel : Eau potable"}).click();
     assert.equal(await page.locator('[name="eau_prevision"]').inputValue(),"100");
     assert.equal(await page.locator('[name="eau_reel"]').inputValue(),"");
+    assert.equal(await page.locator('[name="compteur_1_reel"]').count(),0);
     await page.locator('[name="eau_reel"]').fill("42.50");
     await page.getByRole("button",{name:"Enregistrer",exact:true}).click();
     await page.waitForFunction(() => document.getElementById("modal").hidden);
@@ -47,6 +48,10 @@ async function run(viewport) {
     assert.equal(records.length,2);
     assert.equal(JSON.parse(records[0].observations).postes.eau.reel,100);
     assert.equal(JSON.parse(records[1].observations).postes.eau.prevision,100);
+    assert.deepEqual(JSON.parse(records[1].observations).postes.compteur_1,{prevision:500});
+    await page.getByRole("button",{name:"Modifier : Eau potable"}).click();
+    assert.equal(await page.locator('[name="eau_reel"]').inputValue(),"42.5");
+    await page.getByRole("button",{name:"Annuler",exact:true}).click();
     await page.getByRole("button",{name:"Ajouter une année"}).click();
     await page.locator('[name="annee"]').fill("2026");
     await page.getByRole("button",{name:"Enregistrer",exact:true}).click();
