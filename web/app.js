@@ -899,6 +899,20 @@
     return `<div class="desktop-wrap">${renderTravaux()}</div>`;
   }
 
+  const travauxTvaRates = ["5.5","10","20"];
+
+  function travauxTtc(t, field, ht) {
+    if (ht == null) return null;
+    const d = t.detail || travauxDetails(t);
+    if (Number.isFinite(d.devis_ttc) && (field === "devis" || (field === "estime" && Number(ht) === d.devis_ht))) return d.devis_ttc;
+    if (Number(ht) === 0) return 0;
+    return travauxTvaRates.includes(String(d.tva_travaux)) ? round2(Number(ht) * (1 + Number(d.tva_travaux)/100)) : null;
+  }
+
+  function travauxMontant(ht, ttc, partial = false) {
+    return `${ht == null ? "—" : euro(ht)}<div class="table-sub">${ttc == null ? "TTC à préciser" : euro(ttc)+" TTC"+(partial?" (partiel)":"")}</div>`;
+  }
+
   function renderTravaux() {
     const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) })).filter(t => !["entretien","etude"].includes(t.detail.rubrique));
     const years = [...new Set(all.map(t => String(t.detail.annee || "Non programme")))].sort();
@@ -910,29 +924,41 @@
       (!query || [t.titre, t.description, t.entreprise, t.detail.localisation, t.detail.notes].join(" ").toLocaleLowerCase("fr").includes(query)))
       .sort((a, b) => String(a.detail.annee || 9999).localeCompare(String(b.detail.annee || 9999)) || String(a.priorite).localeCompare(String(b.priorite)));
     const closed = t => /Soldé|Payé|Paye|Abandonn|Realise|Réceptionné/.test(t.statut);
+    const amounts = [
+      ["Estimation","estime",t=>t.montant_estime],
+      ["Devis","devis",t=>t.detail.devis_ht],
+      ["Réalisé","reel",t=>t.montant_reel]
+    ];
+    const lineAmount = (t,field,get) => travauxMontant(get(t),travauxTtc(t,field,get(t)));
+    const totalAmount = (group,field,get) => {
+      const entries = group.filter(t=>get(t)!=null);
+      const values = entries.map(t=>travauxTtc(t,field,get(t)));
+      const known = values.filter(v=>v!==null);
+      const subtotal = known.length && (!values.includes(null) || known.some(v=>v>0)) ? round2(known.reduce((s,v)=>s+v,0)) : null;
+      return travauxMontant(entries.length ? round2(entries.reduce((s,t)=>s+Number(get(t)),0)) : null,subtotal,known.length!==values.length);
+    };
+    const mobileAmounts = get => `<div class="works-amounts">${amounts.map(([label,field,read])=>`<div><span>${label} HT</span><div>${get(field,read)}</div></div>`).join("")}</div>`;
     const card = t => `<div class="row">
       <div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id) || "General")}</div></div><span class="chip">${escapeHtml(t.detail.annee || "Non programme")}</span></div>
       <div class="chips"><span class="chip ${/^P[12]|Critique|Urgente/.test(t.priorite) ? "red" : "orange"}">${escapeHtml(t.priorite)}</span><span class="chip ${closed(t) ? "green" : ""}">${escapeHtml(t.statut)}</span></div>
-      <div class="works-amounts"><span>Estimation HT <b>${euro(t.montant_estime)}</b></span><span>Devis HT <b>${t.detail.devis_ht == null ? "—" : euro(t.detail.devis_ht)}</b></span><span>Réalisé HT <b>${euro(t.montant_reel)}</b></span></div>
+      ${mobileAmounts((field,get)=>lineAmount(t,field,get))}
       ${travauxNotesHtml(t)}
       ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}
     </div>`;
     return `
       <div class="cards works-cards">
         <div class="card"><small>Opérations à suivre</small><strong>${rows.filter(t => !closed(t)).length}</strong></div>
-        <div class="card orange"><small>Estimation HT</small><strong>${euro(sum(rows, "montant_estime"))}</strong></div>
-        <div class="card"><small>Devis reçus HT</small><strong>${euro(rows.reduce((s,t) => s + Number(t.detail.devis_ht || 0), 0))}</strong></div>
-        <div class="card green"><small>Réalisé HT</small><strong>${euro(sum(rows, "montant_reel"))}</strong></div>
+        ${amounts.map(([label,field,get])=>`<div class="card"><small>${label} HT</small><div>${totalAmount(rows,field,get)}</div></div>`).join("")}
       </div>
       <div class="panel">
         <div class="panel-head"><h3>Programmation par année</h3></div>
         <div class="table-wrap desktop-table"><table class="data-table works-summary"><thead><tr><th>Année cible</th><th>Opérations</th><th>Estimation HT</th><th>Devis HT</th><th>Réalisé HT</th></tr></thead><tbody>${years.map(y => {
           const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
-          return `<tr><td><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button></td><td>${group.length}</td><td>${euro(sum(group,"montant_estime"))}</td><td>${euro(group.reduce((s,t)=>s+Number(t.detail.devis_ht||0),0))}</td><td>${euro(sum(group,"montant_reel"))}</td></tr>`;
+          return `<tr><td><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button></td><td>${group.length}</td>${amounts.map(([,field,get])=>`<td>${totalAmount(group,field,get)}</td>`).join("")}</tr>`;
         }).join("")}</tbody></table></div>
         <div class="list mobile-list">${years.map(y => {
           const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
-          return `<div class="row"><div class="row-main"><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button><span>${group.length} opérations</span></div><div class="works-amounts"><span>Estimation HT<b>${euro(sum(group,"montant_estime"))}</b></span><span>Devis HT<b>${euro(group.reduce((s,t)=>s+Number(t.detail.devis_ht||0),0))}</b></span><span>Réalisé HT<b>${euro(sum(group,"montant_reel"))}</b></span></div></div>`;
+          return `<div class="row"><div class="row-main"><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button><span>${group.length} opérations</span></div>${mobileAmounts((field,get)=>totalAmount(group,field,get))}</div>`;
         }).join("")}</div>
       </div>
       <div class="panel works-panel">
@@ -943,7 +969,7 @@
           <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
           <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
         </div>
-        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th>Actions</th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td><td class="num">${euro(t.montant_estime)}</td><td class="num">${t.detail.devis_ht==null?"—":euro(t.detail.devis_ht)}</td><td class="num">${euro(t.montant_reel)}</td><td>${adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
+        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th>Actions</th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td>${amounts.map(([,field,get])=>`<td class="num">${lineAmount(t,field,get)}</td>`).join("")}<td>${adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
         <div class="list mobile-list">${rows.length?rows.map(card).join(""):'<div class="empty">Aucune opération pour ces filtres</div>'}</div>
       </div>`;
   }
@@ -2028,6 +2054,7 @@
         { name: "entreprise", label: "Entreprise / prestataire", value: r.entreprise || "" },
         { type: "number", min: "0", step: "0.01", name: "montant_estime", label: rubrique === "entretien" ? "Budget HT (annuel si récurrent)" : "Estimation HT (€)", value: r.montant_estime || 0 },
         { type: "number", min: "0", step: "0.01", name: "devis_ht_travaux", label: "Devis HT (€)", value: d.devis_ht ?? "" },
+        { type: "select", name: "tva_travaux", label: "TVA travaux", value: String(d.tva_travaux ?? ""), options: [{value:"",label:"À préciser"},...travauxTvaRates.map(value=>({value,label:value.replace(".",",")+" %"}))] },
         { type: "number", min: "0", step: "0.01", name: "montant_reel", label: "Réalisé HT (€)", value: r.montant_reel || 0 },
         { type: "date", name: "date_prevue", label: "Date prévue (si connue)", value: r.date_prevue || "" },
         { type: "date", name: "date_realisation", label: "Date de réception", value: r.date_realisation || "" },
@@ -2039,6 +2066,8 @@
     },
     setTravauxRubrique(form) {
       const entretien = form.elements.rubrique_travaux.value === "entretien";
+      form.elements.tva_travaux.disabled = entretien;
+      form.elements.tva_travaux.closest("label").hidden = entretien;
       const estimateLabel = form.elements.montant_estime.closest("label");
       estimateLabel.firstChild.textContent = entretien ? "Budget HT (annuel si récurrent)" : "Estimation HT (€)";
       for (const name of ["categorie_entretien","frequence_entretien","budget_entretien","exclure_budget_entretien"]) {
@@ -2186,7 +2215,11 @@
         details.origine = Object.hasOwn(travauxOrigins,data.origine_travaux) ? data.origine_travaux : "nouveau";
         details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
         details.localisation = data.localisation_travaux;
-        details.devis_ht = data.devis_ht_travaux === "" ? null : money(data.devis_ht_travaux);
+        const devisHt = data.devis_ht_travaux === "" ? null : money(data.devis_ht_travaux);
+        if (devisHt !== details.devis_ht) delete details.devis_ttc;
+        details.devis_ht = devisHt;
+        if (details.rubrique === "travaux") details.tva_travaux = travauxTvaRates.includes(data.tva_travaux) ? Number(data.tva_travaux) : null;
+        delete data.tva_travaux;
         details.note_matt = data.note_matt_travaux;
         details.notes = data.notes_travaux;
         data.observations = JSON.stringify(details);

@@ -32,6 +32,7 @@ async function run(viewport) {
     await form.locator('[name="annee_cible"]').fill("2028");
     await form.locator('[name="montant_estime"]').fill("1200");
     await form.locator('[name="devis_ht_travaux"]').fill("1100");
+    await form.locator('[name="tva_travaux"]').selectOption("10");
     assert.equal(await page.locator("#modal-body").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await form.getByRole("button", { name: "Enregistrer" }).click();
     await page.waitForFunction(() => document.getElementById("modal").hidden);
@@ -42,7 +43,9 @@ async function run(viewport) {
     assert.equal(detail.source_key, "test-one");
     assert.equal(detail.notes, "Note conservée");
     assert.equal(row.montant_estime, 1200);
+    assert.equal(detail.tva_travaux, 10);
     await page.getByLabel("Année travaux").selectOption("");
+    assert.match(await visibleList.innerText(), /1320.00 EUR TTC/);
     assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-travaux-${viewport.width}.png`), fullPage: true });
     const deleteButton = visibleList.getByRole("button", { name: "Supprimer", exact: true }).first();
@@ -59,6 +62,8 @@ async function run(viewport) {
     assert.equal(await newForm.locator('[name="origine_travaux"]').inputValue(), 'nouveau');
     assert.equal(await newForm.locator('[name="annee_cible"]').isEditable(), true);
     await newForm.locator('[name="annee_cible"]').fill('2029');
+    await newForm.locator('[name="montant_estime"]').fill('200');
+    await newForm.locator('[name="tva_travaux"]').selectOption('20');
     await newForm.locator('[name="titre"]').fill('Fuite imprévue');
     await newForm.getByRole('button', { name: 'Enregistrer' }).click();
     await page.waitForFunction(() => document.getElementById('modal').hidden);
@@ -70,6 +75,7 @@ async function run(viewport) {
     assert.equal(JSON.parse(added.observations).origine, 'nouveau');
     await page.getByLabel('Année travaux').selectOption('2029');
     assert.match(await visibleList.innerText(), /Fuite imprévue/);
+    assert.match(await visibleList.innerText(), /240.00 EUR TTC/);
     await page.getByLabel('Année travaux').selectOption('');
     await page.getByLabel('Origine des travaux').selectOption('base');
     assert.doesNotMatch(await visibleList.innerText(), /Fuite imprévue/);
@@ -172,7 +178,7 @@ async function run(viewport) {
       const key = 'ruvelon_v3_travaux';
       const rows = JSON.parse(localStorage.getItem(key));
       rows.push(
-        {id:'sol',titre:'Reprise sol communs étage',montant_estime:3000,statut:'0 - À chiffrer'},
+        {id:'sol',titre:'Reprise sol communs étage',montant_estime:3000,statut:'0 - À chiffrer',observations:JSON.stringify({version_travaux:1,devis_ht:3000,devis_ttc:3390})},
         {id:'copie-sol',titre:'Sol commun étage',montant_estime:500,statut:'À étudier',observations:JSON.stringify({version_travaux:1,rubrique:'etude',etude_travaux_id:'sol'})}
       );
       localStorage.setItem(key,JSON.stringify(rows));
@@ -184,6 +190,7 @@ async function run(viewport) {
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Sol commun étage|Reprise sol communs étage/);
     await page.locator('[data-route="travaux"]').click();
     assert.match(await page.locator('#screen').innerText(), /Reprise sol communs étage/);
+    assert.match(await visibleList.innerText(), /3390.00 EUR TTC/);
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Sol commun étage/);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
