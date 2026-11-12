@@ -6,6 +6,7 @@
   const REPORT_CATEGORY = "compte_rendu";
   const REPORT_NOTE_CATEGORY = "annotation_compte_rendu";
   const ENERGY_CATEGORY = "depense_energie";
+  const ENERGY_METERS_CATEGORY = "compteurs_energie";
   const MAINTENANCE_BUDGET_CATEGORY = "depense_entretien";
   const ENERGY_POSTS = [
     ["eau", "Eau potable", ""],
@@ -679,9 +680,14 @@
   }
 
   function annualLedgerConfig(kind) {
-    return kind === "entretien"
-      ? {category:MAINTENANCE_BUDGET_CATEGORY,title:"Budget annuel d’entretien",unit:"€ HT",yearLabel:"Année entretien",posts:Object.entries(entretienCategories).map(([key,label])=>[key,label,""])}
-      : {category:ENERGY_CATEGORY,title:"Dépenses énergie",unit:"€",yearLabel:"Année énergie",posts:ENERGY_POSTS};
+    if (kind === "entretien") return {category:MAINTENANCE_BUDGET_CATEGORY,title:"Budget annuel d’entretien",unit:"€ HT",yearLabel:"Année entretien",posts:Object.entries(entretienCategories).map(([key,label])=>[key,label,""])};
+    const record = state.annualLedgers.energie.records.find(r=>r.categorie===ENERGY_METERS_CATEGORY);
+    const meters = record ? reportDetails(record).compteurs : {};
+    const posts = ENERGY_POSTS.map(([key,title,detail])=>{
+      const number = String(meters?.[key] || "");
+      return [key,title,/^\d{6,18}$/.test(number) ? `${detail} · Compteur n° ${number}` : detail];
+    });
+    return {category:ENERGY_CATEGORY,title:"Dépenses énergie",unit:"€",yearLabel:"Année énergie",posts};
   }
 
   async function loadAnnualRecords(kind) {
@@ -690,7 +696,9 @@
     ledger.error = "";
     if (state.route === kind) render();
     try {
-      ledger.records = await dbDocumentMetadata([annualLedgerConfig(kind).category]);
+      const categories = [annualLedgerConfig(kind).category];
+      if (kind === "energie") categories.push(ENERGY_METERS_CATEGORY);
+      ledger.records = await dbDocumentMetadata(categories);
     } catch (error) {
       ledger.error = "Impossible de charger les dépenses : " + (error.message || error);
     } finally {

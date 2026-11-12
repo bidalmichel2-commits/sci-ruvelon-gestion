@@ -20,6 +20,7 @@ async function run(viewport) {
         id:"energie-"+annee,categorie:"depense_energie",
         observations:JSON.stringify({annee,postes:Object.fromEntries(Object.entries(values).map(([key,amount])=>[key,annee===2025?{reel:amount}:{prevision:amount}]))})
       }));
+      records.push({id:"compteurs-test",categorie:"compteurs_energie",observations:JSON.stringify({compteurs:{compteur_2:"123456789",compteur_1:"987654321"}})});
       localStorage.setItem("ruvelon_v3_documents",JSON.stringify(records));
     });
     await page.reload({waitUntil:"networkidle"});
@@ -34,6 +35,8 @@ async function run(viewport) {
     assert.match(await content(),/Prévision 2026/i);
     assert.match(await content(),/1 150,00 €/);
     assert.match(await content(),/Compteur 1/);
+    assert.match(await content(),/RC4, RC5, RC6, RC7 et RC8 · Compteur n° 123456789/);
+    assert.match(await content(),/E2, E3, E5, E6 et E7 · Compteur n° 987654321/);
     await page.getByRole("button",{name:"Saisir le réel : Eau potable"}).click();
     assert.equal(await page.locator('[name="eau_prevision"]').inputValue(),"100");
     assert.equal(await page.locator('[name="eau_reel"]').inputValue(),"");
@@ -45,7 +48,7 @@ async function run(viewport) {
     assert.match(await content(),/42,50 €/);
     assert.match(await content(),/1 150,00 €/);
     const records = await page.evaluate(() => JSON.parse(localStorage.getItem("ruvelon_v3_documents")));
-    assert.equal(records.length,2);
+    assert.equal(records.length,3);
     assert.equal(JSON.parse(records[0].observations).postes.eau.reel,100);
     assert.equal(JSON.parse(records[1].observations).postes.eau.prevision,100);
     assert.deepEqual(JSON.parse(records[1].observations).postes.compteur_1,{prevision:500});
