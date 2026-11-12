@@ -913,12 +913,50 @@
     return `${ht == null ? "—" : euro(ht)}<div class="table-sub">${ttc == null ? "TTC à préciser" : euro(ttc)+" TTC"+(partial?" (partiel)":"")}</div>`;
   }
 
+  function workSchedule(t) {
+    return {annee:Number((t.detail || travauxDetails(t)).annee) || Number(String(t.date_prevue || "").slice(0,4)) || null,date:t.date_prevue || null};
+  }
+
+  function workScheduleHistory(detail) {
+    return Array.isArray(detail.reports) ? detail.reports : [];
+  }
+
+  function activeWorkReports(history) {
+    const active = [];
+    for (const event of history) {
+      if (event.type === "report") active.push(event);
+      else if (event.type === "annulation") active.pop();
+    }
+    return active;
+  }
+
+  function sameWorkSchedule(a,b) { return a.annee === b.annee && a.date === b.date; }
+
+  function canReportWork(t) {
+    return !["entretien","etude"].includes((t.detail || travauxDetails(t)).rubrique) &&
+      !/soldé|payé|paye|abandonn|réalisé|realise|réceptionné|facturé/i.test(t.statut || "") &&
+      !(Number(t.montant_reel)>0) && workSchedule(t).annee >= 2000;
+  }
+
+  function workReportInfo(t) {
+    const history = workScheduleHistory(t.detail);
+    const initial = history[0]?.avant.annee;
+    if (!initial) return "";
+    return `<div class="table-sub">Prévu initialement en ${initial}</div><details class="works-details"><summary>Historique des reports (${history.length})</summary><ul>${history.map(event=>`<li>${escapeHtml(fmtDate(event.date))} · ${event.type==="annulation"?"Annulation":"Report"} : ${event.avant.annee}${event.avant.date?" ("+escapeHtml(fmtDate(event.avant.date))+")":""} → ${event.apres.annee}${event.apres.date?" ("+escapeHtml(fmtDate(event.apres.date))+")":""}${event.motif?" · "+escapeHtml(event.motif):""}</li>`).join("")}</ul></details>`;
+  }
+
   function renderTravaux() {
     const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) })).filter(t => !["entretien","etude"].includes(t.detail.rubrique));
-    const years = [...new Set(all.map(t => String(t.detail.annee || "Non programme")))].sort();
+    const yearOf = t => String(workSchedule(t).annee || "Non programme");
+    const years = [...new Set(all.flatMap(t=>[yearOf(t),...workScheduleHistory(t.detail).map(e=>String(e.avant.annee))]))].sort();
+    const reportsFrom = year => all.filter(t=>yearOf(t)!==year && activeWorkReports(workScheduleHistory(t.detail)).some(e=>String(e.avant.annee)===year));
+    const reportTrace = year => {
+      const reports = reportsFrom(year);
+      return reports.length ? `<details class="works-details"><summary>${reports.length} report${reports.length===1?"":"s"} vers une autre année</summary><ul>${reports.map(t=>`<li>${escapeHtml(t.titre)} → ${escapeHtml(yearOf(t))}</li>`).join("")}</ul></details>` : "";
+    };
     const statuses = [...new Set([...travauxStatuses, ...all.map(t => t.statut)])];
     const query = state.travauxSearch.toLocaleLowerCase("fr");
-    const rows = all.filter(t => (!state.travauxYear || String(t.detail.annee || "Non programme") === state.travauxYear) &&
+    const rows = all.filter(t => (!state.travauxYear || yearOf(t) === state.travauxYear) &&
       (!state.travauxStatus || t.statut === state.travauxStatus) &&
       (!state.travauxOrigin || travauxOrigin(t) === state.travauxOrigin) &&
       (!query || [t.titre, t.description, t.entreprise, t.detail.localisation, t.detail.notes].join(" ").toLocaleLowerCase("fr").includes(query)))
@@ -938,27 +976,32 @@
       return travauxMontant(entries.length ? round2(entries.reduce((s,t)=>s+Number(get(t)),0)) : null,subtotal,known.length!==values.length);
     };
     const mobileAmounts = get => `<div class="works-amounts">${amounts.map(([label,field,read])=>`<div><span>${label} HT</span><div>${get(field,read)}</div></div>`).join("")}</div>`;
+    const actions = t => {
+      const last = activeWorkReports(workScheduleHistory(t.detail)).at(-1);
+      return adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button>${canReportWork(t)?`<button onclick="App.openWorkReport('${t.id}')">Reporter</button>`:""}${last && canReportWork(t) && sameWorkSchedule(workSchedule(t),last.apres)?`<button onclick="App.openWorkReport('${t.id}',true)">Annuler le dernier report</button>`:""}<button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`);
+    };
     const card = t => `<div class="row">
-      <div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id) || "General")}</div></div><span class="chip">${escapeHtml(t.detail.annee || "Non programme")}</span></div>
+      <div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id) || "General")}</div></div><span class="chip">${escapeHtml(yearOf(t))}</span></div>
       <div class="chips"><span class="chip ${/^P[12]|Critique|Urgente/.test(t.priorite) ? "red" : "orange"}">${escapeHtml(t.priorite)}</span><span class="chip ${closed(t) ? "green" : ""}">${escapeHtml(t.statut)}</span></div>
       ${mobileAmounts((field,get)=>lineAmount(t,field,get))}
       ${travauxNotesHtml(t)}
-      ${adminHtml(`<div class="actions"><button onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}
+      ${workReportInfo(t)}
+      ${actions(t)}
     </div>`;
     return `
       <div class="cards works-cards">
         <div class="card"><small>Opérations à suivre</small><strong>${rows.filter(t => !closed(t)).length}</strong></div>
         ${amounts.map(([label,field,get])=>`<div class="card"><small>${label} HT</small><div>${totalAmount(rows,field,get)}</div></div>`).join("")}
       </div>
-      <div class="panel">
+      <div class="panel travaux-programmation">
         <div class="panel-head"><h3>Programmation par année</h3></div>
         <div class="table-wrap desktop-table"><table class="data-table works-summary"><thead><tr><th>Année cible</th><th>Opérations</th><th>Estimation HT</th><th>Devis HT</th><th>Réalisé HT</th></tr></thead><tbody>${years.map(y => {
-          const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
-          return `<tr><td><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button></td><td>${group.length}</td>${amounts.map(([,field,get])=>`<td>${totalAmount(group,field,get)}</td>`).join("")}</tr>`;
+          const group = all.filter(t => yearOf(t) === y);
+          return `<tr data-annee="${escapeHtml(y)}"><td><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button></td><td>${group.length}${reportTrace(y)}</td>${amounts.map(([,field,get])=>`<td>${totalAmount(group,field,get)}</td>`).join("")}</tr>`;
         }).join("")}</tbody></table></div>
         <div class="list mobile-list">${years.map(y => {
-          const group = all.filter(t => String(t.detail.annee || "Non programme") === y);
-          return `<div class="row"><div class="row-main"><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button><span>${group.length} opérations</span></div>${mobileAmounts((field,get)=>totalAmount(group,field,get))}</div>`;
+          const group = all.filter(t => yearOf(t) === y);
+          return `<div class="row" data-annee="${escapeHtml(y)}"><div class="row-main"><button class="table-action" onclick="App.filterTravaux('travauxYear','${escapeHtml(y)}')">${escapeHtml(y)}</button><span>${group.length} opérations</span></div>${reportTrace(y)}${mobileAmounts((field,get)=>totalAmount(group,field,get))}</div>`;
         }).join("")}</div>
       </div>
       <div class="panel works-panel">
@@ -969,7 +1012,7 @@
           <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
           <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
         </div>
-        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th>Actions</th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(t.detail.annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td>${amounts.map(([,field,get])=>`<td class="num">${lineAmount(t,field,get)}</td>`).join("")}<td>${adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
+        <div class="table-wrap desktop-table"><table class="data-table works-table"><thead><tr><th>Année</th><th>Travaux / lieu</th><th>Priorité</th><th>Avancement</th><th>Estim. HT</th><th>Devis HT</th><th>Réel HT</th><th>Actions</th></tr></thead><tbody>${rows.map(t=>`<tr><td><strong>${escapeHtml(workSchedule(t).annee || "À définir")}</strong></td><td><strong>${escapeHtml(t.titre)}</strong><div class="table-sub">${escapeHtml(t.detail.localisation || localLabel("locaux", t.local_id))}</div>${travauxNotesHtml(t)}</td><td><span class="chip ${/^P[12]/.test(t.priorite)?"red":""}">${escapeHtml(t.priorite)}</span></td><td>${escapeHtml(t.statut)}</td>${amounts.map(([,field,get])=>`<td class="num">${lineAmount(t,field,get)}</td>`).join("")}<td>${workReportInfo(t)}${actions(t)}</td></tr>`).join("")}</tbody></table>${!rows.length?'<div class="empty">Aucune opération pour ces filtres</div>':""}</div>
         <div class="list mobile-list">${rows.length?rows.map(card).join(""):'<div class="empty">Aucune opération pour ces filtres</div>'}</div>
       </div>`;
   }
@@ -1386,6 +1429,7 @@
         else if (action === "saveReport") await window.App.saveReport(form);
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
         else if (action === "saveEtude") await window.App.saveEtude(form);
+        else if (action === "saveWorkReport") await window.App.saveWorkReport(form);
         else await window.App.save(form.dataset.table, form);
       });
     }
@@ -2030,6 +2074,62 @@
         { type: "textarea", name: "observations", label: "Observations", value: r.observations || "" }
       ], "baux"));
       this.recalcBailForm(document.getElementById("edit-form"));
+    },
+    openWorkReport(id,undo=false) {
+      if (!ensureAdminAction()) return;
+      const row = state.data.travaux.find(t=>t.id===id);
+      if (!row || !canReportWork(row)) return;
+      const schedule = workSchedule(row);
+      const history = workScheduleHistory(travauxDetails(row));
+      const last = activeWorkReports(history).at(-1);
+      if (undo && (!last || !sameWorkSchedule(schedule,last.apres))) return;
+      const target = undo ? last.avant.annee : schedule.annee+1;
+      const fields = [
+        {type:"hidden",name:"id",value:id},
+        {type:"hidden",name:"undo",value:undo?"1":""},
+        {type:"number",name:"annee",label:undo?"Année rétablie":"Nouvelle année",value:target,min:undo?2000:schedule.annee+1,step:"1",required:true,readonly:undo},
+        {type:"textarea",name:"motif",label:"Motif (facultatif)",value:""}
+      ];
+      const info = undo && last.avant.date ? `Date rétablie : ${fmtDate(last.avant.date)}.` : undo ? "" : "La date précise reste à définir.";
+      openModal(undo ? "Annuler le dernier report" : "Reporter les travaux",
+        `<div class="notice info"><strong>${escapeHtml(row.titre)}</strong><div>Année actuelle : ${schedule.annee}. ${escapeHtml(info)}</div></div>`+formHtml(fields,"travaux","saveWorkReport"));
+      const form = $("#edit-form");
+      form.dataset.schedule = JSON.stringify(schedule);
+      form.dataset.reportCount = String(history.length);
+      form.querySelector('[type="submit"]').textContent = undo ? "Confirmer l’annulation" : "Confirmer le report";
+    },
+    async saveWorkReport(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = readForm(form);
+        const rows = await dbList("travaux");
+        const row = rows.find(t=>t.id===data.id);
+        if (!row || !canReportWork(row)) throw new Error("Ce travail ne peut plus être reporté.");
+        const detail = travauxDetails(row);
+        const history = workScheduleHistory(detail);
+        const before = workSchedule(row);
+        if (JSON.stringify(before)!==form.dataset.schedule || String(history.length)!==form.dataset.reportCount) {
+          throw new Error("La programmation a changé. Rouvrez la fiche.");
+        }
+        const undo = data.undo==="1";
+        const last = activeWorkReports(history).at(-1);
+        const year = Number(data.annee);
+        if (undo ? !last || !sameWorkSchedule(before,last.apres) : !Number.isInteger(year) || year<=before.annee || year>9999) {
+          throw new Error("La nouvelle programmation est invalide.");
+        }
+        const after = undo ? last.avant : {annee:year,date:null};
+        const event = {type:undo?"annulation":"report",date:today(),avant:before,apres:after,motif:data.motif.trim()};
+        const saved = await dbSave("travaux",{id:row.id,date_prevue:after.date,observations:JSON.stringify({...detail,version_travaux:1,annee:after.annee,reports:[...history,event]})});
+        state.data.travaux = rows.map(t=>t.id===row.id?{...t,...saved}:t);
+        if (state.travauxYear === String(before.annee)) state.travauxYear = String(after.annee);
+        closeModal();
+        render();
+        toast(undo ? "Programmation précédente rétablie" : `Travaux reportés à ${after.annee}`);
+      } catch (error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
     },
     openTravaux(id) {
       if (!ensureAdminAction()) return;
