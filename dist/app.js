@@ -6,6 +6,7 @@
   const REPORT_CATEGORY = "compte_rendu";
   const REPORT_NOTE_CATEGORY = "annotation_compte_rendu";
   const ENERGY_CATEGORY = "depense_energie";
+  const MAINTENANCE_BUDGET_CATEGORY = "depense_entretien";
   const ENERGY_POSTS = [
     ["eau", "Eau potable", ""],
     ["edf_communs", "EDF communs", ""],
@@ -31,10 +32,7 @@
     reportId: "",
     reportsLoading: false,
     reportsError: "",
-    energyRecords: [],
-    energyYear: currentMonth().slice(0,4),
-    energyLoading: false,
-    energyError: "",
+    annualLedgers: Object.fromEntries(["energie","entretien"].map(kind=>[kind,{records:[],year:currentMonth().slice(0,4),loading:false,error:""}])),
     user: null,
     profile: null,
     isAdmin: false,
@@ -380,7 +378,7 @@
     if (state.route === "entretien") screen.innerHTML = renderEntretien();
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
-    if (state.route === "energie") screen.innerHTML = renderEnergy();
+    if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie"); }
     if (state.route === "plus") screen.innerHTML = renderPlus();
   }
 
@@ -680,66 +678,75 @@
     catch (error) { return {}; }
   }
 
-  async function loadEnergyRecords() {
-    state.energyLoading = true;
-    state.energyError = "";
-    if (state.route === "energie") render();
+  function annualLedgerConfig(kind) {
+    return kind === "entretien"
+      ? {category:MAINTENANCE_BUDGET_CATEGORY,title:"Budget annuel d’entretien",unit:"€ HT",yearLabel:"Année entretien",posts:Object.entries(entretienCategories).map(([key,label])=>[key,label,""])}
+      : {category:ENERGY_CATEGORY,title:"Dépenses énergie",unit:"€",yearLabel:"Année énergie",posts:ENERGY_POSTS};
+  }
+
+  async function loadAnnualRecords(kind) {
+    const ledger = state.annualLedgers[kind];
+    ledger.loading = true;
+    ledger.error = "";
+    if (state.route === kind) render();
     try {
-      state.energyRecords = await dbDocumentMetadata([ENERGY_CATEGORY]);
+      ledger.records = await dbDocumentMetadata([annualLedgerConfig(kind).category]);
     } catch (error) {
-      state.energyError = "Impossible de charger les dépenses énergie : " + (error.message || error);
+      ledger.error = "Impossible de charger les dépenses : " + (error.message || error);
     } finally {
-      state.energyLoading = false;
-      if (state.route === "energie") render();
+      ledger.loading = false;
+      if (state.route === kind) render();
     }
   }
 
-  function energyByYear(records = state.energyRecords) {
-    const byYear = new Map();
+  function annualByYear(kind, records = state.annualLedgers[kind].records) {
+    const byYear = kind === "entretien" ? entretienAnnualDefaults() : new Map();
     for (const record of records) {
       const details = reportDetails(record);
       const year = Number(details.annee);
-      if (Number.isInteger(year) && year >= 2000 && year <= 2100 && !byYear.has(year)) {
-        byYear.set(year,{id:record.id, posts:details.postes || {}});
+      if (Number.isInteger(year) && year >= 2000 && year <= 2100 && !byYear.get(year)?.id) {
+        const savedPosts = details.postes || {};
+        byYear.set(year,{id:record.id,savedPosts,posts:{...byYear.get(year)?.posts,...savedPosts}});
       }
     }
     return byYear;
   }
 
-  function renderEnergy() {
-    setTitle("Dépenses énergie");
-    if (state.energyLoading) return '<div class="empty">Chargement des dépenses énergie…</div>';
-    if (state.energyError) return `<div class="notice danger">${escapeHtml(state.energyError)}</div><button class="secondary" onclick="App.go('energie')">Réessayer</button>`;
-    const records = energyByYear();
+  function renderAnnualLedger(kind) {
+    const ledger = state.annualLedgers[kind];
+    const config = annualLedgerConfig(kind);
+    if (ledger.loading) return '<div class="empty">Chargement des dépenses…</div>';
+    if (ledger.error) return `<div class="notice danger">${escapeHtml(ledger.error)}</div><button class="secondary" onclick="App.go('${kind}')">Réessayer</button>`;
+    const records = annualByYear(kind);
     const years = [...records.keys()].sort((a,b)=>b-a);
-    const year = records.has(Number(state.energyYear)) ? Number(state.energyYear) : years[0];
+    const year = records.has(Number(ledger.year)) ? Number(ledger.year) : years[0];
     const current = records.get(year);
     const previous = records.get(year-1);
     const format = new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"});
-    const display = amount => amount == null ? "—" : format.format(amount);
+    const display = amount => amount == null ? "—" : format.format(amount)+(kind==="entretien"?" HT":"");
     const amount = (record,key,kind) => {
       const value = record?.posts[key]?.[kind];
       return typeof value === "number" && Number.isFinite(value) ? value : null;
     };
-    const rows = ENERGY_POSTS.map(([key,title,detail])=>({key,title,detail,values:[amount(previous,key,"reel"),amount(current,key,"prevision"),amount(current,key,"reel")]}));
+    const rows = config.posts.map(([key,title,detail])=>({key,title,detail,values:[amount(previous,key,"reel"),amount(current,key,"prevision"),amount(current,key,"reel")]}));
     const totals = [0,1,2].map(index => rows.some(r=>r.values[index] !== null) ? round2(rows.reduce((s,r)=>s+(r.values[index] ?? 0),0)) : null);
     const headings = [`Réel ${year-1}`,`Prévision ${year}`,`Réel ${year}`];
     const valueCells = values => values.map(value=>`<td class="num">${display(value)}</td>`).join("");
     const mobileValues = values => `<div class="works-amounts">${values.map((value,index)=>`<span>${headings[index]}<b>${display(value)}</b></span>`).join("")}</div>`;
     const postAction = row => {
       const label = row.values[2] === null ? "Saisir le réel" : "Modifier";
-      return adminHtml(`<button class="table-action" aria-label="${label} : ${row.title}" onclick="App.openEnergyForm(${year},'${row.key}')">${label}</button>`);
+      return `<button class="table-action" aria-label="${label} : ${row.title}" onclick="App.openAnnualForm('${kind}',${year},'${row.key}')">${label}</button>`;
     };
-    return `<section class="desktop-wrap panel works-panel">
-      <div class="panel-head"><h3>Dépenses énergie</h3>${adminHtml('<button class="primary" onclick="App.openEnergyForm()">Ajouter une année</button>')}</div>
+    return `<section class="${kind==="energie"?"desktop-wrap":""} panel works-panel annual-ledger ${kind==="entretien"?"entretien-budget":""}">
+      <div class="panel-head"><h3>${config.title}</h3>${adminHtml(`<button class="primary" onclick="App.openAnnualForm('${kind}')">Ajouter une année</button>`)}</div>
       ${current ? `
-      <div class="toolbar"><select aria-label="Année énergie" onchange="App.setEnergyYear(this.value)">${years.map(y=>`<option value="${y}" ${y===year?"selected":""}>${y}</option>`).join("")}</select>
-      ${adminHtml(`<button class="secondary" onclick="App.openEnergyForm(${year})">Modifier ${year}</button>`)}</div>
+      <div class="toolbar"><select aria-label="${config.yearLabel}" onchange="App.setAnnualYear('${kind}',this.value)">${years.map(y=>`<option value="${y}" ${y===year?"selected":""}>${y}</option>`).join("")}</select>
+      ${adminHtml(`<button class="secondary" onclick="App.openAnnualForm('${kind}',${year})">Modifier ${year}</button>`)}</div>
       <div class="table-wrap desktop-table"><table class="data-table energy-table"><thead><tr><th>Poste</th>${headings.map(h=>`<th class="num">${h}</th>`).join("")}${adminHtml("<th>Action</th>")}</tr></thead>
       <tbody>${rows.map(r=>`<tr><td><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</td>${valueCells(r.values)}${adminHtml(`<td>${postAction(r)}</td>`)}</tr>`).join("")}</tbody>
       <tfoot><tr><th>Total</th>${totals.map(value=>`<th class="num">${display(value)}</th>`).join("")}${adminHtml("<td></td>")}</tr></tfoot></table></div>
       <div class="list mobile-list"><div class="row"><strong>Total</strong>${mobileValues(totals)}</div>${rows.map(r=>`<div class="row"><div><strong>${r.title}</strong>${r.detail ? `<div class="table-sub">${r.detail}</div>` : ""}</div>${mobileValues(r.values)}${adminHtml(`<div class="actions">${postAction(r)}</div>`)}</div>`).join("")}</div>
-      ` : '<div class="empty">Aucune dépense énergie enregistrée</div>'}
+      ` : '<div class="empty">Aucune dépense enregistrée</div>'}
     </section>`;
   }
 
@@ -966,16 +973,33 @@
     return {years:[...byYear.values()].sort((a,b)=>a.year-b.year).map(r=>({...r,total:round2(r.recurring+r.oneOff+r.billed)})), unplanned};
   }
 
-  function renderEntretienForecast(rows) {
-    const {years,unplanned} = entretienForecast(rows, Number(currentMonth().slice(0,4)));
-    return `<section class="panel entretien-budget">
-      <div class="panel-head"><div><h3>Prévisionnel par année</h3><div class="table-sub">Toutes catégories · Total HT, factures comprises</div></div></div>
-      <div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th class="num">Récurrent HT</th><th class="num">Ponctuel HT</th><th class="num">Facturé HT</th><th class="num">Total prévu HT</th><th class="num">HT/TTC à préciser</th></tr></thead><tbody>
-      ${years.map(r => `<tr><td><strong>${r.year}</strong></td><td class="num">${euro(r.recurring)}</td><td class="num">${euro(r.oneOff)}</td><td class="num">${euro(r.billed)}</td><td class="num"><strong>${euro(r.total)}</strong></td><td class="num">${r.unconfirmed ? euro(r.unconfirmed) : "—"}</td></tr>`).join("")}
-      </tbody></table></div>
-      <div class="list mobile-list">${years.map(r => `<div class="row"><div class="row-main"><strong>${r.year}</strong><strong>${euro(r.total)} HT</strong></div><div class="works-amounts"><span>Récurrent HT<b>${euro(r.recurring)}</b></span><span>Ponctuel HT<b>${euro(r.oneOff)}</b></span><span>Facturé HT<b>${euro(r.billed)}</b></span></div>${r.unconfirmed ? `<div class="row-sub">Hors total · HT/TTC à préciser : ${euro(r.unconfirmed)}</div>` : ""}</div>`).join("")}</div>
-      ${unplanned.length ? `<div class="notice info"><strong>Sans année définie · hors total</strong><ul>${unplanned.map(r=>`<li>${escapeHtml(r.title)} : ${euro(r.amount)} (${r.basis})</li>`).join("")}</ul></div>` : ""}
-    </section>`;
+  function entretienAnnualDefaults() {
+    const rows = state.data.travaux.map(t=>({...t,detail:travauxDetails(t)})).filter(t=>t.detail.rubrique==="entretien");
+    const current = Number(currentMonth().slice(0,4));
+    const byYear = new Map();
+    const put = (year,key,field,value) => {
+      if (!byYear.has(year)) byYear.set(year,{posts:{}});
+      const posts = byYear.get(year).posts;
+      if (!posts[key]) posts[key] = {prevision:null,reel:null};
+      posts[key][field] = round2(value) || null;
+    };
+    for (const key of Object.keys(entretienCategories)) {
+      const group = rows.filter(t=>(t.detail.entretien_categorie || "autre")===key);
+      for (const row of entretienForecast(group,current).years) put(row.year,key,"reel",row.billed);
+      // Project the original budget independently from invoices and actual spending.
+      for (const row of entretienForecast(group.map(t=>({...t,montant_reel:0})),current).years) put(row.year,key,"prevision",row.recurring+row.oneOff);
+    }
+    return byYear;
+  }
+
+  function renderEntretienUnassigned(rows) {
+    const {unplanned} = entretienForecast(rows,Number(currentMonth().slice(0,4)));
+    const pending = rows.filter(t=>money(t.detail.budget_indique) && !t.detail.entretien_exclure_budget);
+    const notes = [
+      ...pending.map(t=>({title:t.titre,amount:money(t.detail.budget_indique),basis:"HT/TTC à préciser"})),
+      ...unplanned.filter(r=>r.basis!=="HT/TTC à préciser")
+    ];
+    return notes.length ? `<div class="notice info"><strong>Montants des fiches à préciser · hors total HT</strong><ul>${notes.map(r=>`<li>${escapeHtml(r.title)} : ${euro(r.amount)} (${r.basis})</li>`).join("")}</ul></div>` : "";
   }
 
   function renderEntretien() {
@@ -988,7 +1012,7 @@
     const amount = t => Number(t.montant_reel) || (t.detail.devis_ht ?? t.montant_estime);
     const place = t => t.detail.localisation || localLabel("locaux", t.local_id);
     const actions = t => adminHtml(`<div class="actions"><button class="table-action" onclick="App.openTravaux('${t.id}')">Modifier</button><button class="danger" onclick="App.deleteTravaux('${t.id}')">Supprimer</button></div>`);
-    return `<div class="desktop-wrap">${renderEntretienForecast(all)}<section class="panel works-panel">
+    return `<div class="desktop-wrap">${renderAnnualLedger("entretien")}${renderEntretienUnassigned(all)}<section class="panel works-panel entretien-details">
       <div class="panel-head"><h3>Suivi de l’entretien</h3>${adminHtml('<button class="primary" onclick="App.openTravaux()">Ajouter</button>')}</div>
       <div class="toolbar"><select aria-label="Catégorie d’entretien" onchange="App.filterTravaux('entretienCategorie',this.value)"><option value="">Toutes les catégories</option>${Object.entries(entretienCategories).map(([key,value]) => `<option value="${key}" ${state.entretienCategorie===key?"selected":""}>${value}</option>`).join("")}</select></div>
       ${rows.length ? `<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Prestation</th><th>Catégorie / fréquence</th><th>Prestataire</th><th>Date prévue</th><th>Avancement</th><th>Montant HT</th><th>Actions</th></tr></thead><tbody>
@@ -1270,7 +1294,7 @@
         if (action === "saveRemuneration") await window.App.saveRemuneration(form);
         else if (action === "savePassword") await window.App.savePassword(form);
         else if (action === "saveReport") await window.App.saveReport(form);
-        else if (action === "saveEnergy") await window.App.saveEnergy(form);
+        else if (action === "saveAnnual") await window.App.saveAnnual(form);
         else await window.App.save(form.dataset.table, form);
       });
     }
@@ -1527,53 +1551,67 @@
     go(route) {
       state.route = route;
       if (route === "comptes-rendus") { state.reportId = ""; return loadReportRecords(); }
-      if (route === "energie") return loadEnergyRecords();
+      if (route === "energie" || route === "entretien") return loadAnnualRecords(route);
       render();
     },
-    setEnergyYear(year) { state.energyYear = String(year); render(); },
-    openEnergyForm(year, postKey) {
-      if (!ensureAdminAction()) return;
-      const records = energyByYear();
+    setAnnualYear(kind,year) {
+      if (!state.annualLedgers[kind]) return;
+      state.annualLedgers[kind].year = String(year);
+      render();
+    },
+    openAnnualForm(kind,year,postKey) {
+      if (!ensureAdminAction() || !state.annualLedgers[kind]) return;
+      const config = annualLedgerConfig(kind);
+      const records = annualByYear(kind);
       const existing = records.get(year);
-      const posts = postKey ? ENERGY_POSTS.filter(([key]) => key === postKey) : ENERGY_POSTS;
+      const posts = postKey ? config.posts.filter(([key]) => key === postKey) : config.posts;
       if (postKey && (!existing || !posts.length)) return;
       const next = records.size ? Math.max(...records.keys())+1 : Number(currentMonth().slice(0,4));
       const fields = [{type:"number",name:"annee",label:"Année",value:existing ? year : Math.min(next,2100),min:2000,max:2100,step:"1",required:true,readonly:Boolean(existing)}];
       for (const [key,label] of posts) {
         fields.push(
-          {type:"number",name:key+"_prevision",label:label+" · Prévision (€)",value:existing?.posts[key]?.prevision ?? "",step:"0.01",min:"0"},
-          {type:"number",name:key+"_reel",label:label+" · Réel (€)",value:existing?.posts[key]?.reel ?? "",step:"0.01",min:"0"}
+          {type:"number",name:key+"_prevision",label:`${label} · Prévision (${config.unit})`,value:existing?.posts[key]?.prevision ?? "",step:"0.01",min:"0"},
+          {type:"number",name:key+"_reel",label:`${label} · Réel (${config.unit})`,value:existing?.posts[key]?.reel ?? "",step:"0.01",min:"0"}
         );
       }
-      const title = postKey ? `${posts[0][1]} · ${year}` : existing ? `Dépenses énergie ${year}` : "Ajouter une année";
-      openModal(title,formHtml(fields,"documents","saveEnergy"));
+      const title = postKey ? `${posts[0][1]} · ${year}` : existing ? `${config.title} ${year}` : "Ajouter une année";
+      openModal(title,formHtml(fields,"documents","saveAnnual"));
       const form = $("#edit-form");
-      form.dataset.energyId = existing?.id || "";
-      form.dataset.energyPost = postKey || "";
+      form.dataset.annualKind = kind;
+      form.dataset.annualYear = existing ? String(year) : "";
+      form.dataset.annualId = existing?.id || "";
+      form.dataset.annualPost = postKey || "";
       if (postKey) form.elements[postKey+"_reel"].focus();
     },
-    async saveEnergy(form) {
+    async saveAnnual(form) {
       if (!ensureAdminAction() || !form.reportValidity()) return;
       const submit = form.querySelector('[type="submit"]');
       if (submit.disabled) return;
       submit.disabled = true;
       try {
+        const kind = form.dataset.annualKind;
+        const ledger = state.annualLedgers[kind];
+        if (!ledger) throw new Error("Rubrique introuvable.");
+        const config = annualLedgerConfig(kind);
         const data = new FormData(form);
         const annee = Number(data.get("annee"));
         if (!Number.isInteger(annee) || annee < 2000 || annee > 2100) throw new Error("Année invalide.");
-        const current = energyByYear(await dbDocumentMetadata([ENERGY_CATEGORY])).get(annee);
-        if ((current?.id || "") !== form.dataset.energyId) throw new Error("Cette année existe déjà. Ouvrez sa fiche pour la modifier.");
+        const current = annualByYear(kind,await dbDocumentMetadata([config.category])).get(annee);
+        if (current && !form.dataset.annualYear) throw new Error("Cette année existe déjà. Ouvrez sa fiche pour la modifier.");
+        if (form.dataset.annualYear && (String(annee)!==form.dataset.annualYear || !current || (current.id || "")!==form.dataset.annualId)) {
+          throw new Error("Cette année a changé. Rouvrez la fiche avant d’enregistrer.");
+        }
         const value = name => data.get(name) === "" ? null : money(data.get(name));
-        const postKey = form.dataset.energyPost;
-        const posts = postKey ? ENERGY_POSTS.filter(([key]) => key === postKey) : ENERGY_POSTS;
-        if (!posts.length || (postKey && !current)) throw new Error("Poste énergie introuvable.");
-        const postes = {...current?.posts};
+        const postKey = form.dataset.annualPost;
+        const posts = postKey ? config.posts.filter(([key]) => key === postKey) : config.posts;
+        if (!posts.length || (postKey && !current)) throw new Error("Poste introuvable.");
+        const postes = {...current?.savedPosts};
         for (const [key] of posts) postes[key] = {prevision:value(key+"_prevision"),reel:value(key+"_reel")};
-        await dbSave("documents",{...(current ? {id:current.id} : {}),nom_fichier:`Énergie ${annee}`,categorie:ENERGY_CATEGORY,url:"",observations:JSON.stringify({annee,postes})});
-        state.energyYear = String(annee);
+        await dbSave("documents",{...(current?.id ? {id:current.id} : {}),nom_fichier:`${config.title} ${annee}`,categorie:config.category,url:"",observations:JSON.stringify({annee,postes})});
+        ledger.year = String(annee);
         closeModal();
-        await loadEnergyRecords();
-        toast("Dépenses énergie enregistrées");
+        await loadAnnualRecords(kind);
+        toast("Dépenses enregistrées");
       } catch (error) { toast(error.message || "Enregistrement impossible."); }
       finally { submit.disabled = false; }
     },

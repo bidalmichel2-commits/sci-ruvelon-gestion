@@ -88,7 +88,7 @@ async function run(viewport) {
     assert.equal(JSON.parse(added.observations).annee, null);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-travaux-ajout-${viewport.width}.png`), fullPage: true });
     await page.locator('[data-route="entretien"]').click();
-    await page.locator('.works-panel .panel-head button').click();
+    await page.locator('.entretien-details .panel-head button').click();
     assert.equal(await newForm.locator('[name="rubrique_travaux"]').inputValue(), 'entretien');
     await newForm.locator('[name="titre"]').fill('Contrôle chaudière');
     await newForm.locator('[name="categorie_entretien"]').selectOption('chaudiere');
@@ -102,13 +102,27 @@ async function run(viewport) {
     assert.match(await page.locator('#screen').innerText(), /Contrôle chaudière/);
     assert.match(await page.locator('#screen').innerText(), /Annuel/);
     assert.match(await page.locator('#screen').innerText(), /12\/02\/2027/);
-    assert.match(await page.locator('.entretien-budget').innerText(), /178.00 EUR/);
+    await page.getByLabel('Année entretien').selectOption('2027');
+    assert.match(await page.locator('.entretien-budget').innerText(), /178,00\s€ HT/);
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Fuite imprévue/);
     await page.getByLabel('Catégorie d’entretien').selectOption('menage');
     assert.doesNotMatch(await page.locator('#screen').innerText(), /Contrôle chaudière/);
     await page.getByLabel('Catégorie d’entretien').selectOption('');
     const savedMaintenance = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t=>t.titre==='Contrôle chaudière'));
     assert.equal(JSON.parse(savedMaintenance.observations).entretien_categorie, 'chaudiere');
+    await page.getByRole('button',{name:'Saisir le réel : Entretien chaudière'}).click();
+    assert.equal(await newForm.locator('[name="chaudiere_prevision"]').inputValue(),'178');
+    await newForm.locator('[name="chaudiere_reel"]').fill('82.50');
+    await newForm.getByRole('button',{name:'Enregistrer'}).click();
+    await page.getByRole('button',{name:'Modifier : Entretien chaudière'}).waitFor();
+    assert.match(await page.locator('.entretien-budget').innerText(), /82,50\s€ HT/);
+    const updated = await page.evaluate(() => {
+      const docs=JSON.parse(localStorage.getItem('ruvelon_v3_documents'));
+      const fiches=JSON.parse(localStorage.getItem('ruvelon_v3_travaux'));
+      return {budget:JSON.parse(docs.find(d=>d.categorie==='depense_entretien').observations),fiche:fiches.find(t=>t.titre==='Contrôle chaudière')};
+    });
+    assert.deepEqual(updated.budget,{annee:2027,postes:{chaudiere:{prevision:178,reel:82.5}}});
+    assert.deepEqual(updated.fiche,savedMaintenance);
     assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
     await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-entretien-${viewport.width}.png`) });
     await page.locator('[data-route="travaux"]').click();
