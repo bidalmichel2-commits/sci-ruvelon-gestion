@@ -10,6 +10,7 @@
   const ENERGY_METERS_CATEGORY = "compteurs_energie";
   const ENERGY_ENTRY_CATEGORY = "depense_energie_ligne";
   const PROPERTY_TAX_CATEGORY = "taxe_fonciere";
+  const PROPERTY_TAX_BILL_CATEGORY = "taxe_fonciere_sci";
   const MAINTENANCE_BUDGET_CATEGORY = "depense_entretien";
   const ENERGY_POSTS = [
     ["eau", "Eau potable", ""],
@@ -42,6 +43,7 @@
     contributionsLoading: false,
     annualLedgers: Object.fromEntries(["energie","entretien"].map(kind=>[kind,{records:[],year:currentMonth().slice(0,4),loading:false,error:""}])),
     propertyTaxes: [],
+    propertyTaxBills: [],
     propertyTaxesLoading: false,
     propertyTaxesError: "",
     propertyTaxYear: String(new Date().getFullYear()),
@@ -673,7 +675,7 @@
 
   async function dbDocumentMetadata(categories) {
     if (!sb) return localRead("documents").filter(r => categories.includes(r.categorie)).map(({url, ...row}) => row);
-    const fields = "id,nom_fichier,categorie,observations,created_at";
+    const fields = "id,nom_fichier,categorie,observations,local_id,locataire_id,created_at";
     const {data,error} = await sb.from("documents").select(fields).in("categorie",categories).order("created_at",{ascending:false});
     if (error) throw error;
     return data || [];
@@ -784,30 +786,52 @@
     if (state.propertyTaxesLoading) return '<div class="empty">Chargement des taxes foncières…</div>';
     if (state.propertyTaxesError) return '<div class="notice danger">'+escapeHtml(state.propertyTaxesError)+'</div><button class="secondary" onclick="App.go(\'taxes-foncieres\')">Réessayer</button>';
     const currentYear = new Date().getFullYear();
-    const years = [...new Set([currentYear,...state.propertyTaxes.map(row=>Number(propertyTaxDetails(row).annee)).filter(Number.isInteger)])].sort((a,b)=>b-a);
+    const allTaxRows = [...state.propertyTaxes,...state.propertyTaxBills];
+    const years = [...new Set([currentYear,...allTaxRows.map(row=>Number(propertyTaxDetails(row).annee)).filter(Number.isInteger)])].sort((a,b)=>b-a);
     let year = Number(state.propertyTaxYear);
     if (!years.includes(year)) year = years[0];
     state.propertyTaxYear = String(year);
+    const bill = state.propertyTaxBills.find(row=>Number(propertyTaxDetails(row).annee)===year);
+    const billData = bill ? propertyTaxDetails(bill) : {};
     const rows = state.propertyTaxes.filter(row=>Number(propertyTaxDetails(row).annee)===year)
-      .sort((a,b)=>String(propertyTaxDetails(a).date_facturation||"").localeCompare(String(propertyTaxDetails(b).date_facturation||"")));
-    const total = round2(rows.reduce((sum,row)=>sum+(Number(propertyTaxDetails(row).montant)||0),0));
-    const status = value => value ? '<span class="chip green">Oui</span>' : '<span class="chip red">Non</span>';
-    const actions = row => adminHtml('<div class="actions"><button class="table-action" onclick="App.openPropertyTax(\''+escapeHtml(row.id)+'\')">Modifier</button><button class="danger" onclick="App.deletePropertyTax(\''+escapeHtml(row.id)+'\')">Supprimer</button></div>');
+      .sort((a,b)=>String(propertyTaxDetails(a).periode_debut||"").localeCompare(String(propertyTaxDetails(b).periode_debut||"")));
+    const amount = row => Number(propertyTaxDetails(row).montant_ht ?? propertyTaxDetails(row).montant ?? 0) || 0;
+    const vat = row => Number(propertyTaxDetails(row).montant_tva ?? propertyTaxDetails(row).tva ?? 0) || 0;
+    const gross = row => Number(propertyTaxDetails(row).montant_ttc ?? (amount(row)+vat(row))) || 0;
+    const totalHt = round2(rows.reduce((sum,row)=>sum+amount(row),0));
+    const totalVat = round2(rows.reduce((sum,row)=>sum+vat(row),0));
+    const totalGross = round2(rows.reduce((sum,row)=>sum+gross(row),0));
+    const due = status => rows.filter(row=>propertyTaxDetails(row).statut===status).reduce((sum,row)=>sum+gross(row),0);
+    const yesNo = value => value ? '<span class="chip green">Oui</span>' : '<span class="chip red">Non</span>';
+    const allocationActions = row => adminHtml('<div class="actions"><button class="table-action" onclick="App.openTaxAllocation(\''+escapeHtml(row.id)+'\')">Modifier</button><button class="danger" onclick="App.deleteTaxAllocation(\''+escapeHtml(row.id)+'\')">Supprimer</button></div>');
     const yearOptions = years.map(y=>'<option value="'+y+'" '+(y===year?'selected':'')+'>'+y+'</option>').join("");
     const tenantName = row => localLabel("locataires",row.locataire_id) || "Preneur non rattaché";
     const localName = row => localLabel("locaux",row.local_id) || "Local non rattaché";
-    const desktopRows = rows.map(row=>{const d=propertyTaxDetails(row);return '<tr><td>'+year+'</td><td>'+escapeHtml(tenantName(row))+'</td><td>'+escapeHtml(localName(row))+'</td><td>'+escapeHtml(fmtDate(d.date_facturation)||"—")+'</td><td class="num">'+euro(d.montant)+'</td><td>'+status(d.transmise)+'</td><td>'+status(d.acquittee)+'</td><td>'+escapeHtml(d.base_contractuelle||"—")+'</td>'+adminHtml('<td>'+actions(row)+'</td>')+'</tr>';}).join("");
-    const mobileRows = rows.map(row=>{const d=propertyTaxDetails(row);return '<div class="row"><div class="row-main"><strong>'+escapeHtml(tenantName(row))+' · '+escapeHtml(localName(row))+'</strong><strong>'+euro(d.montant)+'</strong></div><div class="row-sub">Taxe '+year+' · Facturation '+escapeHtml(fmtDate(d.date_facturation)||"—")+'</div><div class="chips"><span class="chip">Transmise : '+(d.transmise?"Oui":"Non")+'</span><span class="chip">Acquittée : '+(d.acquittee?"Oui":"Non")+'</span></div><div class="row-sub">Base contractuelle : '+escapeHtml(d.base_contractuelle||"—")+'</div>'+actions(row)+'</div>';}).join("");
-    return '<section class="panel works-panel property-tax-panel"><div class="panel-head"><div><h3>Suivi de la taxe foncière</h3><div class="table-sub">Facturation et règlement par année, preneur et local</div></div>'+adminHtml('<button class="primary" onclick="App.openPropertyTax()">Ajouter une taxe foncière</button>')+'</div>'+
-      '<div class="toolbar"><label>Année<select aria-label="Année taxe foncière" onchange="App.setPropertyTaxYear(this.value)">'+yearOptions+'</select></label><strong>Total '+year+' : '+euro(total)+'</strong></div>'+
-      (rows.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th>Preneur</th><th>Local</th><th>Date de facturation</th><th class="num">Montant</th><th>Transmise</th><th>Acquittée</th><th>Base contractuelle</th>'+adminHtml('<th>Actions</th>')+'</tr></thead><tbody>'+desktopRows+'</tbody><tfoot><tr><th colspan="4">Total '+year+'</th><th class="num">'+euro(total)+'</th><th colspan="3"></th>'+adminHtml('<th></th>')+'</tr></tfoot></table></div><div class="list mobile-list">'+mobileRows+'<div class="row"><strong>Total '+year+'</strong><strong>'+euro(total)+'</strong></div></div>' : '<div class="empty">Aucune taxe foncière enregistrée pour '+year+'.</div>')+'</section>';
+    const desktopRows = rows.map(row=>{const d=propertyTaxDetails(row);const st=d.statut||((d.acquittee||d.payee_preneur)?"Payé":d.transmise?"Facture transmise":"À facturer");return '<tr><td>'+escapeHtml(tenantName(row))+'</td><td>'+escapeHtml(localName(row))+'</td><td>'+escapeHtml(fmtDate(d.periode_debut)||"—")+' → '+escapeHtml(fmtDate(d.periode_fin)||"—")+'<div class="table-sub">'+(Number(d.jours)||0)+' jours</div></td><td>'+escapeHtml(d.base_contractuelle||"—")+'</td><td class="num">'+euro(amount(row))+'</td><td class="num">'+euro(vat(row))+'</td><td class="num"><strong>'+euro(gross(row))+'</strong></td><td>'+escapeHtml(fmtDate(d.echeance)||"—")+'</td><td>'+escapeHtml(st)+'</td><td>'+yesNo(st==="Facture transmise"||st==="Payé")+'</td><td>'+yesNo(st==="Payé")+'</td>'+adminHtml('<td>'+allocationActions(row)+'</td>')+'</tr>';}).join("");
+    const mobileRows = rows.map(row=>{const d=propertyTaxDetails(row);const st=d.statut||((d.acquittee||d.payee_preneur)?"Payé":d.transmise?"Facture transmise":"À facturer");return '<div class="row"><div class="row-main"><strong>'+escapeHtml(tenantName(row))+' · '+escapeHtml(localName(row))+'</strong><strong>'+euro(gross(row))+' TTC</strong></div><div class="row-sub">'+escapeHtml(fmtDate(d.periode_debut)||"—")+' au '+escapeHtml(fmtDate(d.periode_fin)||"—")+' · '+(Number(d.jours)||0)+' jours</div><div class="chips"><span class="chip">HT '+euro(amount(row))+'</span><span class="chip">TVA '+euro(vat(row))+'</span><span class="chip">'+escapeHtml(st)+'</span></div><div class="row-sub">Échéance : '+escapeHtml(fmtDate(d.echeance)||"—")+' · Base : '+escapeHtml(d.base_contractuelle||"—")+'</div>'+allocationActions(row)+'</div>';}).join("");
+    const billAction = adminHtml(bill ? '<button class="secondary" onclick="App.openPropertyTax(\''+escapeHtml(bill.id)+'\')">Modifier l’avis SCI</button>' : '<button class="primary" onclick="App.openPropertyTax()">Ajouter l’avis SCI</button>');
+    const billSection = bill ? '<div class="toolbar"><strong>Avis '+year+' : '+euro(billData.montant_total)+' à la charge de la SCI</strong><span>Date : '+escapeHtml(fmtDate(billData.date_facturation)||"—")+'</span><span>Acquittée par la SCI : '+yesNo(billData.acquittee_sci)+'</span><span>Surface de référence : '+(billData.surface_reference?escapeHtml(String(billData.surface_reference))+" m²":"—")+'</span>'+billAction+'</div>' :
+      '<div class="notice info">Enregistrez d’abord le montant de l’avis payé par la SCI. Vous pourrez ensuite ventiler uniquement les montants récupérables prévus aux baux.</div>'+adminHtml(billAction);
+    const metrics = '<div class="toolbar"><strong>Total récupérable prévisionnel : '+euro(totalGross)+' TTC</strong><span>HT '+euro(totalHt)+' · TVA '+euro(totalVat)+'</span><span>À facturer : '+euro(due("À facturer"))+'</span><span>Transmis : '+euro(due("Facture transmise")+due("Payé"))+'</span><span>Payé par preneurs : '+euro(due("Payé"))+'</span><span>À programmer / vérifier : '+euro(due("À programmer")+due("En attente du choix")+due("À vérifier"))+'</span></div>';
+    const allocationTable = rows.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Preneur</th><th>Local</th><th>Période / jours</th><th>Base contractuelle</th><th class="num">HT</th><th class="num">TVA</th><th class="num">TTC</th><th>Échéance</th><th>Suivi</th><th>Transmise</th><th>Acquittée</th>'+adminHtml('<th>Actions</th>')+'</tr></thead><tbody>'+desktopRows+'</tbody><tfoot><tr><th colspan="4">Total prévisionnel</th><th class="num">'+euro(totalHt)+'</th><th class="num">'+euro(totalVat)+'</th><th class="num">'+euro(totalGross)+'</th><th colspan="4"></th>'+adminHtml('<th></th>')+'</tr></tfoot></table></div><div class="list mobile-list">'+mobileRows+'<div class="row"><strong>Total récupérable TTC</strong><strong>'+euro(totalGross)+'</strong></div></div>' : '<div class="empty">Aucune refacturation enregistrée pour '+year+'.</div>';
+    return '<section class="panel works-panel property-tax-panel"><div class="panel-head"><div><h3>Taxe foncière payée par la SCI</h3><div class="table-sub">Avis annuel et montant total réellement supporté par la SCI</div></div></div>'+
+      '<div class="toolbar"><label>Année<select aria-label="Année taxe foncière" onchange="App.setPropertyTaxYear(this.value)">'+yearOptions+'</select></label></div>'+billSection+
+      '<div class="panel-head"><div><h3>Répartition / refacturation aux preneurs</h3><div class="table-sub">Montants calculés ou saisis selon la base prévue au bail</div></div>'+adminHtml(bill?'<button class="primary" onclick="App.openTaxAllocation()">Ajouter une refacturation</button>':'')+'</div>'+
+      metrics+allocationTable+'</section>';
   }
 
   async function loadPropertyTaxes() {
     state.propertyTaxesLoading = true;
     state.propertyTaxesError = "";
     render();
-    try { state.propertyTaxes = await dbDocumentMetadata([PROPERTY_TAX_CATEGORY]); }
+    try {
+      const [allocations,bills] = await Promise.all([
+        dbDocumentMetadata([PROPERTY_TAX_CATEGORY]),
+        dbDocumentMetadata([PROPERTY_TAX_BILL_CATEGORY])
+      ]);
+      state.propertyTaxes = allocations;
+      state.propertyTaxBills = bills;
+    }
     catch(error) { state.propertyTaxesError = "Impossible de charger les taxes foncières : "+(error.message||error); }
     finally { state.propertyTaxesLoading = false; if(state.route==="taxes-foncieres") render(); }
   }
@@ -1552,6 +1576,7 @@
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
         else if (action === "saveEnergyExpense") await window.App.saveEnergyExpense(form);
         else if (action === "savePropertyTax") await window.App.savePropertyTax(form);
+        else if (action === "saveTaxAllocation") await window.App.saveTaxAllocation(form);
         else if (action === "saveEtude") await window.App.saveEtude(form);
         else if (action === "saveWorkReport") await window.App.saveWorkReport(form);
         else await window.App.save(form.dataset.table, form);
@@ -1876,24 +1901,147 @@
     },
     openPropertyTax(id) {
       if (!ensureAdminAction()) return;
-      const row = state.propertyTaxes.find(item=>item.id===id);
+      const row = state.propertyTaxBills.find(item=>item.id===id);
       const d = row ? propertyTaxDetails(row) : {};
       const year = d.annee || state.propertyTaxYear || String(new Date().getFullYear());
-      const tenantOptions = state.data.locataires.map(tenant=>'<option value="'+escapeHtml(tenant.id)+'" '+(tenant.id===(row?.locataire_id||"")?'selected':'')+'>'+escapeHtml(localLabel("locataires",tenant.id))+'</option>').join("");
-      const html = '<form id="edit-form" class="form-grid" data-action="savePropertyTax">'+
-        '<label>Année<input type="number" name="annee" min="2000" max="2100" step="1" value="'+escapeHtml(year)+'" required onchange="App.propertyTaxTenantChanged(this.form)"></label>'+
-        '<label>Preneur<select name="locataire_id" required onchange="App.propertyTaxTenantChanged(this.form)"><option value="">Choisir un preneur</option>'+tenantOptions+'</select></label>'+
-        '<label>Local<select name="local_id" required></select></label><div id="property-tax-local-hint" class="table-sub field-full"></div>'+
-        '<label>Date de facturation<input type="date" name="date_facturation" value="'+escapeHtml(d.date_facturation||today())+'" required></label>'+
-        '<label>Montant de la taxe (€)<input type="number" name="montant" min="0" step="0.01" value="'+escapeHtml(d.montant??"")+'" required></label>'+
-        '<label class="notice info"><input type="checkbox" name="transmise" '+(d.transmise?'checked':'')+'> Facture transmise au preneur</label>'+
-        '<label class="notice info"><input type="checkbox" name="acquittee" '+(d.acquittee?'checked':'')+'> Taxe acquittée</label>'+
-        '<label class="field-full">Base contractuelle (clause du bail)<textarea name="base_contractuelle" required>'+escapeHtml(d.base_contractuelle||"")+'</textarea></label>'+
-        '<div class="form-actions"><button class="secondary" type="button" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div></form>';
-      openModal(id ? "Modifier une taxe foncière" : "Ajouter une taxe foncière",html);
-      const form = $("#edit-form");
-      form.dataset.taxId = row?.id || "";
+      const fields = [
+        {type:"number",name:"annee",label:"Année fiscale",value:year,min:"2000",max:"2100",step:"1",required:true},
+        {type:"date",name:"date_facturation",label:"Date de l’avis de taxe foncière",value:d.date_facturation||today(),required:true},
+        {type:"number",name:"montant_total",label:"Montant total dû par la SCI (€)",value:d.montant_total??"",min:"0",step:"0.01",required:true},
+        {type:"number",name:"tva_taux",label:"TVA sur refacturation (%)",value:d.tva_taux??20,min:"0",step:"0.01",required:true},
+        {type:"number",name:"surface_reference",label:"Surface totale de référence (m²)",value:d.surface_reference??"",min:"0",step:"0.01"},
+        {type:"checkbox",name:"acquittee_sci",label:"Avis de taxe acquitté par la SCI",value:d.acquittee_sci===true},
+        {type:"textarea",name:"observations",label:"Observations",value:d.observations||""}
+      ];
+      openModal(id?"Modifier l’avis de taxe foncière":"Ajouter l’avis de taxe foncière",formHtml(fields,"documents","savePropertyTax"));
+      const form=$("#edit-form");
+      form.dataset.billId=row?.id||"";
+    },
+    async savePropertyTax(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit=form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled=true;
+      try {
+        const data=new FormData(form);
+        const year=Number(data.get("annee"));
+        const total=Number(data.get("montant_total"));
+        const tva=Number(data.get("tva_taux"));
+        const surface=data.get("surface_reference")===""?null:Number(data.get("surface_reference"));
+        if(!Number.isInteger(year)||year<2000||year>2100) throw new Error("Année fiscale invalide.");
+        if(!Number.isFinite(total)||total<=0) throw new Error("Saisissez le montant total de l’avis SCI.");
+        if(!Number.isFinite(tva)||tva<0||tva>100) throw new Error("Taux de TVA invalide.");
+        if(surface!==null&&(!Number.isFinite(surface)||surface<=0)) throw new Error("Surface de référence invalide.");
+        const existing=state.propertyTaxBills.find(row=>Number(propertyTaxDetails(row).annee)===year);
+        if(existing&&!form.dataset.billId) throw new Error("Un avis SCI existe déjà pour cette année. Modifiez-le.");
+        if(form.dataset.billId&&(!existing||existing.id!==form.dataset.billId)) throw new Error("L’avis a changé. Rouvrez sa fiche avant d’enregistrer.");
+        const observations={annee:year,date_facturation:data.get("date_facturation"),montant_total:money(total),tva_taux:tva,surface_reference:surface,acquittee_sci:form.elements.acquittee_sci.checked,observations:String(data.get("observations")||"").trim()};
+        await dbSave("documents",{...(form.dataset.billId?{id:form.dataset.billId}:{}),nom_fichier:"Avis taxe fonciere SCI "+year,categorie:PROPERTY_TAX_BILL_CATEGORY,url:"",observations:JSON.stringify(observations)});
+        state.propertyTaxYear=String(year);
+        closeModal();
+        await loadPropertyTaxes();
+        toast("Avis de taxe foncière SCI enregistré");
+      } catch(error) { toast(error.message||"Enregistrement impossible."); }
+      finally { submit.disabled=false; }
+    },
+    openTaxAllocation(id) {
+      if(!ensureAdminAction()) return;
+      const year=Number(state.propertyTaxYear);
+      const bill=state.propertyTaxBills.find(row=>Number(propertyTaxDetails(row).annee)===year);
+      if(!bill) return toast("Enregistrez d’abord l’avis annuel payé par la SCI.");
+      const row=state.propertyTaxes.find(item=>item.id===id);
+      const d=row?propertyTaxDetails(row):{};
+      const startDefault=year+"-01-01";
+      const endDefault=year+"-12-31";
+      const tenantOptions=[{value:"",label:"Choisir un preneur"},...state.data.locataires.map(tenant=>({value:tenant.id,label:localLabel("locataires",tenant.id)}))];
+      const statuses=["À facturer","Facture transmise","À programmer","En attente du choix","À vérifier","Payé"];
+      const fields=[
+        {type:"number",name:"annee",label:"Année fiscale",value:year,min:"2000",max:"2100",step:"1",readonly:true},
+        {type:"select",name:"locataire_id",label:"Preneur",value:row?.locataire_id||"",options:tenantOptions},
+        {type:"select",name:"local_id",label:"Local",value:row?.local_id||"",options:options("locaux","Choisir")},
+        {type:"date",name:"periode_debut",label:"Début de la période",value:d.periode_debut||startDefault,required:true},
+        {type:"date",name:"periode_fin",label:"Fin de la période",value:d.periode_fin||endDefault,required:true},
+        {type:"number",name:"jours",label:"Nombre de jours (calculé)",value:d.jours??"",readonly:true},
+        {type:"select",name:"methode",label:"Méthode de calcul",value:d.methode||"manuel",options:[{value:"manuel",label:"Montant HT selon le bail (saisie)"},{value:"surface",label:"Quote-part de surface, prorata temporis"},{value:"pourcentage",label:"Pourcentage contractuel, prorata temporis"},{value:"reference",label:"Montant de référence indexé, prorata temporis"}]},
+        {type:"number",name:"surface_m2",label:"Surface concernée (m²)",value:d.surface_m2??"",min:"0",step:"0.01"},
+        {type:"number",name:"taux_contractuel",label:"Part contractuelle (%)",value:d.taux_contractuel??"",min:"0",max:"100",step:"0.01"},
+        {type:"number",name:"coefficient",label:"Coefficient récupérable (%)",value:d.coefficient??100,min:"0",max:"100",step:"0.01"},
+        {type:"number",name:"montant_reference",label:"Montant HT de référence (€)",value:d.montant_reference??"",min:"0",step:"0.01"},
+        {type:"number",name:"taxe_reference",label:"Taxe totale de référence (€)",value:d.taxe_reference??"",min:"0",step:"0.01"},
+        {type:"number",name:"montant_ht",label:"Montant refacturable HT (€)",value:d.montant_ht??d.montant??"",min:"0",step:"0.01",required:true},
+        {type:"number",name:"tva_taux",label:"TVA (%)",value:d.tva_taux??propertyTaxDetails(bill).tva_taux??20,min:"0",step:"0.01",readonly:true},
+        {type:"number",name:"montant_tva",label:"TVA calculée (€)",value:d.montant_tva??d.tva??"",min:"0",step:"0.01",readonly:true},
+        {type:"number",name:"montant_ttc",label:"Total refacturé TTC (€)",value:d.montant_ttc??"",min:"0",step:"0.01",readonly:true},
+        {type:"date",name:"echeance",label:"Échéance de paiement",value:d.echeance||""},
+        {type:"select",name:"statut",label:"Suivi",value:d.statut||((d.acquittee||d.payee_preneur)?"Payé":d.transmise?"Facture transmise":"À facturer"),options:statuses.map(value=>({value,label:value}))},
+        {type:"textarea",name:"base_contractuelle",label:"Base contractuelle (clause et règle appliquée)",value:d.base_contractuelle||"",required:true},
+        {type:"textarea",name:"observations",label:"Observations",value:d.observations||""}
+      ];
+      openModal(id?"Modifier la refacturation":"Ajouter une refacturation",formHtml(fields,"documents","saveTaxAllocation"));
+      const form=$("#edit-form");
+      form.dataset.allocationId=row?.id||"";
+      form.dataset.billId=bill.id;
+      form.dataset.year=String(year);
+      const localHint=document.createElement("small");
+      localHint.id="property-tax-local-hint";
+      form.elements.local_id.closest("label").append(localHint);
+      form.elements.locataire_id.addEventListener("change",()=>this.propertyTaxTenantChanged(form));
       this.propertyTaxTenantChanged(form,row?.local_id||"");
+      ["periode_debut","periode_fin","methode","surface_m2","taux_contractuel","coefficient","montant_reference","taxe_reference","montant_ht"].forEach(name=>{
+        form.elements[name].addEventListener("input",()=>this.recalculateTaxAllocation(form));
+        form.elements[name].addEventListener("change",()=>this.recalculateTaxAllocation(form));
+      });
+      this.recalculateTaxAllocation(form);
+    },
+    recalculateTaxAllocation(form) {
+      const start=String(form.elements.periode_debut.value||"");
+      const end=String(form.elements.periode_fin.value||"");
+      let days=0;
+      if(start&&end&&end>=start) days=Math.floor((Date.parse(end+"T00:00:00Z")-Date.parse(start+"T00:00:00Z"))/86400000)+1;
+      form.elements.jours.value=days||"";
+      const method=form.elements.methode.value;
+      const bill=state.propertyTaxBills.find(row=>row.id===form.dataset.billId);
+      const bd=bill?propertyTaxDetails(bill):{};
+      let ht=Number(form.elements.montant_ht.value)||0;
+      const taxTotal=Number(bd.montant_total)||0;
+      if(method==="surface") {
+        const area=Number(form.elements.surface_m2.value)||0;
+        const totalArea=Number(bd.surface_reference)||0;
+        ht=totalArea?taxTotal*area/totalArea*(days/365):0;
+        form.elements.montant_ht.value=ht?round2(ht).toFixed(2):"";
+      } else if(method==="pourcentage") {
+        const share=(Number(form.elements.taux_contractuel.value)||0)/100;
+        const coefficient=(Number(form.elements.coefficient.value)||0)/100;
+        ht=taxTotal*share*coefficient*(days/365);
+        form.elements.montant_ht.value=ht?round2(ht).toFixed(2):"";
+      } else if(method==="reference") {
+        const reference=Number(form.elements.montant_reference.value)||0;
+        const referenceTax=Number(form.elements.taxe_reference.value)||0;
+        ht=referenceTax?reference*taxTotal/referenceTax*(days/365):0;
+        form.elements.montant_ht.value=ht?round2(ht).toFixed(2):"";
+      } else {
+        form.elements.montant_ht.readOnly=false;
+        form.elements.surface_m2.closest("label").hidden=true;
+        form.elements.taux_contractuel.closest("label").hidden=true;
+        form.elements.coefficient.closest("label").hidden=true;
+        form.elements.montant_reference.closest("label").hidden=true;
+        form.elements.taxe_reference.closest("label").hidden=true;
+        const rate=Number(form.elements.tva_taux.value)||0;
+        const vat=round2(ht*rate/100);
+        form.elements.montant_tva.value=vat.toFixed(2);
+        form.elements.montant_ttc.value=round2(ht+vat).toFixed(2);
+        return;
+      }
+      form.elements.montant_ht.readOnly=true;
+      form.elements.surface_m2.closest("label").hidden=method!=="surface";
+      form.elements.taux_contractuel.closest("label").hidden=method!=="pourcentage";
+      form.elements.coefficient.closest("label").hidden=method!=="pourcentage";
+      form.elements.montant_reference.closest("label").hidden=method!=="reference";
+      form.elements.taxe_reference.closest("label").hidden=method!=="reference";
+      const rate=Number(form.elements.tva_taux.value)||0;
+      const vat=round2(ht*rate/100);
+      form.elements.montant_tva.value=vat.toFixed(2);
+      form.elements.montant_ttc.value=round2(ht+vat).toFixed(2);
     },
     propertyTaxTenantChanged(form,preferredLocal) {
       const tenantId = form.elements.locataire_id.value;
@@ -1912,41 +2060,64 @@
       else if (propertyTaxLocalIds(tenantId,year).length > 1) hint.textContent = "Plusieurs locaux correspondent aux baux de cette année : vérifiez le local sélectionné.";
       else hint.textContent = "Aucun local trouvé dans les baux de cette année : choisissez le local concerné.";
     },
-    async savePropertyTax(form) {
+    async saveTaxAllocation(form) {
       if (!ensureAdminAction() || !form.reportValidity()) return;
       const submit = form.querySelector('[type="submit"]');
       if (submit.disabled) return;
       submit.disabled = true;
       try {
         const data = new FormData(form);
+        this.recalculateTaxAllocation(form);
         const year = Number(data.get("annee"));
-        const amount = Number(data.get("montant"));
+        const ht = Number(form.elements.montant_ht.value);
         const tenantId = String(data.get("locataire_id")||"");
         const localId = String(data.get("local_id")||"");
         const basis = String(data.get("base_contractuelle")||"").trim();
         if (!Number.isInteger(year) || year<2000 || year>2100) throw new Error("Année invalide.");
-        if (!Number.isFinite(amount) || amount<0) throw new Error("Montant invalide.");
+        if (!Number.isFinite(ht) || ht<=0) throw new Error("Montant HT refacturable invalide.");
         if (!tenantId || !localId) throw new Error("Choisissez un preneur et son local.");
         if (!basis) throw new Error("Indiquez la base contractuelle de refacturation.");
-        const details = {annee:year,date_facturation:data.get("date_facturation"),montant:money(amount),transmise:form.elements.transmise.checked,acquittee:form.elements.acquittee.checked,base_contractuelle:basis};
+        const bill=state.propertyTaxBills.find(row=>row.id===form.dataset.billId);
+        if(!bill) throw new Error("L’avis annuel de la SCI est introuvable.");
+        const billTotal=Number(propertyTaxDetails(bill).montant_total)||0;
+        const currentId=form.dataset.allocationId;
+        const priorHt=state.propertyTaxes.filter(row=>row.id!==currentId&&Number(propertyTaxDetails(row).annee)===year).reduce((sum,row)=>sum+(Number(propertyTaxDetails(row).montant_ht??propertyTaxDetails(row).montant)||0),0);
+        if(round2(priorHt+ht)>round2(billTotal)) throw new Error("Le total HT refacturé dépasserait le montant de taxe supporté par la SCI.");
+        const rate=Number(form.elements.tva_taux.value)||0;
+        const vat=round2(ht*rate/100);
+        const gross=round2(ht+vat);
+        const days=Number(form.elements.jours.value)||0;
+        if(!days) throw new Error("Vérifiez la période de refacturation.");
+        const details = {
+          annee:year,taxe_id:bill.id,periode_debut:data.get("periode_debut"),periode_fin:data.get("periode_fin"),jours:days,
+          methode:data.get("methode"),surface_m2:data.get("surface_m2")?Number(data.get("surface_m2")):null,
+          taux_contractuel:data.get("taux_contractuel")?Number(data.get("taux_contractuel")):null,
+          coefficient:data.get("coefficient")?Number(data.get("coefficient")):null,
+          montant_reference:data.get("montant_reference")?Number(data.get("montant_reference")):null,
+          taxe_reference:data.get("taxe_reference")?Number(data.get("taxe_reference")):null,
+          base_contractuelle:basis,montant_ht:money(ht),tva_taux:rate,montant_tva:vat,montant_ttc:gross,
+          echeance:data.get("echeance")||null,statut:data.get("statut")||"À facturer",observations:String(data.get("observations")||"").trim()
+        };
+        details.transmise=details.statut==="Facture transmise"||details.statut==="Payé";
+        details.payee_preneur=details.statut==="Payé";
         const tenant = tenantById(tenantId);
         const local = state.data.locaux.find(item=>item.id===localId);
-        const record = { ...(form.dataset.taxId?{id:form.dataset.taxId}:{}), nom_fichier:"Taxe fonciere "+year+" "+localLabel("locataires",tenantId), categorie:PROPERTY_TAX_CATEGORY, url:"", locataire_id:tenantId, local_id:localId, observations:JSON.stringify(details) };
+        const record = { ...(currentId?{id:currentId}:{}), nom_fichier:"Refacturation taxe fonciere "+year+" "+localLabel("locataires",tenantId), categorie:PROPERTY_TAX_CATEGORY, url:"", locataire_id:tenantId, local_id:localId, observations:JSON.stringify(details) };
         if (!tenant || !local) throw new Error("Preneur ou local introuvable. Actualisez la page puis réessayez.");
         await dbSave("documents",record);
         state.propertyTaxYear = String(year);
         closeModal();
         await loadPropertyTaxes();
-        toast("Taxe foncière enregistrée");
+        toast("Refacturation enregistrée");
       } catch(error) { toast(error.message || "Enregistrement impossible."); }
       finally { submit.disabled = false; }
     },
-    async deletePropertyTax(id) {
+    async deleteTaxAllocation(id) {
       if (!ensureAdminAction()) return;
       const row = state.propertyTaxes.find(item=>item.id===id);
-      if (!row || !await dbDelete("documents",id,"Supprimer cette ligne de taxe foncière ?")) return;
+      if (!row || !await dbDelete("documents",id,"Supprimer cette ligne de refacturation ?")) return;
       await loadPropertyTaxes();
-      toast("Ligne de taxe foncière supprimée");
+      toast("Refacturation supprimée");
     },
     openAnnualForm(kind,year,postKey) {
       if (!ensureAdminAction() || !state.annualLedgers[kind]) return;
