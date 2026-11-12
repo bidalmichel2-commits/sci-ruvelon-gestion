@@ -8,6 +8,8 @@
   const CONTRIBUTOR_EMAIL = "matthieu.lonchamp@gmail.com";
   const ENERGY_CATEGORY = "depense_energie";
   const ENERGY_METERS_CATEGORY = "compteurs_energie";
+  const ENERGY_ENTRY_CATEGORY = "depense_energie_ligne";
+  const PROPERTY_TAX_CATEGORY = "taxe_fonciere";
   const MAINTENANCE_BUDGET_CATEGORY = "depense_entretien";
   const ENERGY_POSTS = [
     ["eau", "Eau potable", ""],
@@ -39,6 +41,10 @@
     contributionsError: "",
     contributionsLoading: false,
     annualLedgers: Object.fromEntries(["energie","entretien"].map(kind=>[kind,{records:[],year:currentMonth().slice(0,4),loading:false,error:""}])),
+    propertyTaxes: [],
+    propertyTaxesLoading: false,
+    propertyTaxesError: "",
+    propertyTaxYear: String(new Date().getFullYear()),
     user: null,
     profile: null,
     isAdmin: false,
@@ -391,7 +397,8 @@
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
     if (state.route === "notes") screen.innerHTML = renderNotes();
-    if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie"); }
+    if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie") + renderEnergyEntries(); }
+    if (state.route === "taxes-foncieres") screen.innerHTML = renderPropertyTaxes();
     if (state.route === "plus") screen.innerHTML = renderPlus();
   }
 
@@ -712,6 +719,7 @@
       const categories = [annualLedgerConfig(kind).category];
       if (kind === "energie") categories.push(ENERGY_METERS_CATEGORY);
       ledger.records = await dbDocumentMetadata(categories);
+      if (kind === "energie") ledger.entries = await dbDocumentMetadata([ENERGY_ENTRY_CATEGORY]);
     } catch (error) {
       ledger.error = "Impossible de charger les dépenses : " + (error.message || error);
     } finally {
@@ -738,14 +746,82 @@
     return Number.isFinite(recordedTtc) ? recordedTtc : Math.round(Math.round(ht*100)*6/5)/100;
   }
 
+  function renderEnergyEntries() {
+    const ledger = state.annualLedgers.energie;
+    const records = ledger.entries || [];
+    const years = [...new Set([Number(currentMonth().slice(0,4)), ...annualByYear("energie").keys(), ...records.map(row=>Number(reportDetails(row).annee)).filter(Number.isInteger)])].sort((a,b)=>b-a);
+    let year = Number(ledger.year);
+    if (!years.includes(year)) year = years[0];
+    ledger.year = String(year);
+    const rows = records.filter(row=>Number(reportDetails(row).annee)===year)
+      .sort((a,b)=>String(reportDetails(b).date||"").localeCompare(String(reportDetails(a).date||"")));
+    const total = round2(rows.reduce((sum,row)=>sum+(Number(reportDetails(row).montant_ttc)||0),0));
+    const actions = row => adminHtml('<div class="actions"><button class="table-action" onclick="App.openEnergyExpense(\''+escapeHtml(row.id)+'\')">Modifier</button><button class="danger" onclick="App.deleteEnergyExpense(\''+escapeHtml(row.id)+'\')">Supprimer</button></div>');
+    const yearOptions = years.map(y=>'<option value="'+y+'" '+(y===year?'selected':'')+'>'+y+'</option>').join("");
+    return '<section class="panel works-panel energy-expenses"><div class="panel-head"><div><h3>Dépenses complémentaires</h3><div class="table-sub">Factures ponctuelles ou nouveaux postes · montants TTC. Ajoutées au total réel annuel si un suivi annuel existe.</div></div>'+adminHtml('<button class="primary" onclick="App.openEnergyExpense()">Ajouter une dépense</button>')+'</div>'+
+      '<div class="toolbar"><label>Année<select aria-label="Année des dépenses complémentaires" onchange="App.setAnnualYear(\'energie\',this.value)">'+yearOptions+'</select></label></div>'+
+      (rows.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Date</th><th>Poste / objet</th><th>Fournisseur</th><th class="num">Montant TTC</th>'+adminHtml('<th>Actions</th>')+'</tr></thead><tbody>'+rows.map(row=>{const d=reportDetails(row);return '<tr><td>'+escapeHtml(fmtDate(d.date)||"—")+'</td><td><strong>'+escapeHtml(d.libelle||row.nom_fichier)+'</strong>'+(d.observations?'<div class="table-sub">'+escapeHtml(d.observations)+'</div>':"")+'</td><td>'+escapeHtml(d.fournisseur||"—")+'</td><td class="num">'+euro(d.montant_ttc)+'</td>'+adminHtml('<td>'+actions(row)+'</td>')+'</tr>';}).join("")+'</tbody><tfoot><tr><th colspan="3">Total complémentaire</th><th class="num">'+euro(total)+'</th>'+adminHtml('<th></th>')+'</tr></tfoot></table></div>'+
+        '<div class="list mobile-list">'+rows.map(row=>{const d=reportDetails(row);return '<div class="row"><div class="row-main"><strong>'+escapeHtml(d.libelle||row.nom_fichier)+'</strong><strong>'+euro(d.montant_ttc)+' TTC</strong></div><div class="row-sub">'+escapeHtml(fmtDate(d.date)||"Date à préciser")+' · '+escapeHtml(d.fournisseur||"Sans fournisseur")+'</div>'+(d.observations?'<div>'+escapeHtml(d.observations)+'</div>':"")+actions(row)+'</div>';}).join("")+'<div class="row"><strong>Total complémentaire</strong><strong>'+euro(total)+'</strong></div></div>' : '<div class="empty">Aucune dépense complémentaire pour '+year+'.</div>')+'</section>';
+  }
+
+  function propertyTaxDetails(row) {
+    return reportDetails(row);
+  }
+
+  function propertyTaxLocalIds(tenantId, year) {
+    const start = String(year) + "-01-01";
+    const end = String(year) + "-12-31";
+    const leases = state.data.baux.filter(b => b.locataire_id === tenantId && b.local_id &&
+      (!b.date_debut || b.date_debut <= end) && (!b.date_fin || b.date_fin >= start) &&
+      !["Resilie","Archive"].includes(b.statut));
+    const matching = [...new Set(leases.map(b => b.local_id))];
+    if (matching.length) return matching;
+    return [...new Set(state.data.baux.filter(b => b.locataire_id === tenantId && b.local_id).map(b => b.local_id))];
+  }
+
+  function renderPropertyTaxes() {
+    setTitle("Taxes foncières");
+    if (state.propertyTaxesLoading) return '<div class="empty">Chargement des taxes foncières…</div>';
+    if (state.propertyTaxesError) return '<div class="notice danger">'+escapeHtml(state.propertyTaxesError)+'</div><button class="secondary" onclick="App.go(\'taxes-foncieres\')">Réessayer</button>';
+    const currentYear = new Date().getFullYear();
+    const years = [...new Set([currentYear,...state.propertyTaxes.map(row=>Number(propertyTaxDetails(row).annee)).filter(Number.isInteger)])].sort((a,b)=>b-a);
+    let year = Number(state.propertyTaxYear);
+    if (!years.includes(year)) year = years[0];
+    state.propertyTaxYear = String(year);
+    const rows = state.propertyTaxes.filter(row=>Number(propertyTaxDetails(row).annee)===year)
+      .sort((a,b)=>String(propertyTaxDetails(a).date_facturation||"").localeCompare(String(propertyTaxDetails(b).date_facturation||"")));
+    const total = round2(rows.reduce((sum,row)=>sum+(Number(propertyTaxDetails(row).montant)||0),0));
+    const status = value => value ? '<span class="chip green">Oui</span>' : '<span class="chip red">Non</span>';
+    const actions = row => adminHtml('<div class="actions"><button class="table-action" onclick="App.openPropertyTax(\''+escapeHtml(row.id)+'\')">Modifier</button><button class="danger" onclick="App.deletePropertyTax(\''+escapeHtml(row.id)+'\')">Supprimer</button></div>');
+    const yearOptions = years.map(y=>'<option value="'+y+'" '+(y===year?'selected':'')+'>'+y+'</option>').join("");
+    const tenantName = row => localLabel("locataires",row.locataire_id) || "Preneur non rattaché";
+    const localName = row => localLabel("locaux",row.local_id) || "Local non rattaché";
+    const desktopRows = rows.map(row=>{const d=propertyTaxDetails(row);return '<tr><td>'+year+'</td><td>'+escapeHtml(tenantName(row))+'</td><td>'+escapeHtml(localName(row))+'</td><td>'+escapeHtml(fmtDate(d.date_facturation)||"—")+'</td><td class="num">'+euro(d.montant)+'</td><td>'+status(d.transmise)+'</td><td>'+status(d.acquittee)+'</td><td>'+escapeHtml(d.base_contractuelle||"—")+'</td>'+adminHtml('<td>'+actions(row)+'</td>')+'</tr>';}).join("");
+    const mobileRows = rows.map(row=>{const d=propertyTaxDetails(row);return '<div class="row"><div class="row-main"><strong>'+escapeHtml(tenantName(row))+' · '+escapeHtml(localName(row))+'</strong><strong>'+euro(d.montant)+'</strong></div><div class="row-sub">Taxe '+year+' · Facturation '+escapeHtml(fmtDate(d.date_facturation)||"—")+'</div><div class="chips"><span class="chip">Transmise : '+(d.transmise?"Oui":"Non")+'</span><span class="chip">Acquittée : '+(d.acquittee?"Oui":"Non")+'</span></div><div class="row-sub">Base contractuelle : '+escapeHtml(d.base_contractuelle||"—")+'</div>'+actions(row)+'</div>';}).join("");
+    return '<section class="panel works-panel property-tax-panel"><div class="panel-head"><div><h3>Suivi de la taxe foncière</h3><div class="table-sub">Facturation et règlement par année, preneur et local</div></div>'+adminHtml('<button class="primary" onclick="App.openPropertyTax()">Ajouter une taxe foncière</button>')+'</div>'+
+      '<div class="toolbar"><label>Année<select aria-label="Année taxe foncière" onchange="App.setPropertyTaxYear(this.value)">'+yearOptions+'</select></label><strong>Total '+year+' : '+euro(total)+'</strong></div>'+
+      (rows.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th>Preneur</th><th>Local</th><th>Date de facturation</th><th class="num">Montant</th><th>Transmise</th><th>Acquittée</th><th>Base contractuelle</th>'+adminHtml('<th>Actions</th>')+'</tr></thead><tbody>'+desktopRows+'</tbody><tfoot><tr><th colspan="4">Total '+year+'</th><th class="num">'+euro(total)+'</th><th colspan="3"></th>'+adminHtml('<th></th>')+'</tr></tfoot></table></div><div class="list mobile-list">'+mobileRows+'<div class="row"><strong>Total '+year+'</strong><strong>'+euro(total)+'</strong></div></div>' : '<div class="empty">Aucune taxe foncière enregistrée pour '+year+'.</div>')+'</section>';
+  }
+
+  async function loadPropertyTaxes() {
+    state.propertyTaxesLoading = true;
+    state.propertyTaxesError = "";
+    render();
+    try { state.propertyTaxes = await dbDocumentMetadata([PROPERTY_TAX_CATEGORY]); }
+    catch(error) { state.propertyTaxesError = "Impossible de charger les taxes foncières : "+(error.message||error); }
+    finally { state.propertyTaxesLoading = false; if(state.route==="taxes-foncieres") render(); }
+  }
+
   function renderAnnualLedger(kind) {
     const ledger = state.annualLedgers[kind];
     const config = annualLedgerConfig(kind);
     if (ledger.loading) return '<div class="empty">Chargement des dépenses…</div>';
     if (ledger.error) return `<div class="notice danger">${escapeHtml(ledger.error)}</div><button class="secondary" onclick="App.go('${kind}')">Réessayer</button>`;
     const records = annualByYear(kind);
-    const years = [...records.keys()].sort((a,b)=>b-a);
-    const year = records.has(Number(ledger.year)) ? Number(ledger.year) : years[0];
+    const entryYears = kind === "energie" ? (ledger.entries || []).map(row=>Number(reportDetails(row).annee)).filter(Number.isInteger) : [];
+    const years = [...new Set([...records.keys(),...entryYears])].sort((a,b)=>b-a);
+    const requestedYear = Number(ledger.year);
+    const year = years.includes(requestedYear) ? requestedYear : (years[0] || Number(currentMonth().slice(0,4)));
     const current = records.get(year);
     const previous = records.get(year-1);
     const format = new Intl.NumberFormat("fr-FR",{style:"currency",currency:"EUR"});
@@ -763,6 +839,11 @@
     });
     const totalFor = field => [0,1,2].map(index => rows.some(r=>r[field][index] !== null) ? round2(rows.reduce((s,r)=>s+(r[field][index] ?? 0),0)) : null);
     const totals = {values:totalFor("values"),ttc:totalFor("ttc")};
+    if (kind === "energie") {
+      const extraTotal = round2((ledger.entries || []).filter(row=>Number(reportDetails(row).annee)===year)
+        .reduce((sum,row)=>sum+(Number(reportDetails(row).montant_ttc)||0),0));
+      if (extraTotal || totals.values[2] !== null) totals.values[2] = round2((totals.values[2] || 0) + extraTotal);
+    }
     const headings = [`Réel ${year-1}`,`Prévision ${year}`,`Réel ${year}`];
     const columns = headings.flatMap(h=>dual ? [h+" HT",h+" TTC"] : [h+" TTC"]);
     const valueCells = ({values,ttc},tag="td") => values.flatMap((v,i)=>dual ? [v,ttc[i]] : [v]).map(v=>`<${tag} class="num">${display(v)}</${tag}>`).join("");
@@ -1469,6 +1550,8 @@
         else if (action === "saveReport") await window.App.saveReport(form);
         else if (action === "saveContribution") await window.App.saveContribution(form);
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
+        else if (action === "saveEnergyExpense") await window.App.saveEnergyExpense(form);
+        else if (action === "savePropertyTax") await window.App.savePropertyTax(form);
         else if (action === "saveEtude") await window.App.saveEtude(form);
         else if (action === "saveWorkReport") await window.App.saveWorkReport(form);
         else await window.App.save(form.dataset.table, form);
@@ -1733,12 +1816,137 @@
         return loadContributions().finally(()=>{ state.contributionsLoading = false; if (state.route==="notes") render(); });
       }
       if (route === "energie" || route === "entretien") return loadAnnualRecords(route);
+      if (route === "taxes-foncieres") return loadPropertyTaxes();
       render();
     },
     setAnnualYear(kind,year) {
       if (!state.annualLedgers[kind]) return;
       state.annualLedgers[kind].year = String(year);
       render();
+    },
+    openEnergyExpense(id) {
+      if (!ensureAdminAction()) return;
+      const row = (state.annualLedgers.energie.entries || []).find(item=>item.id===id);
+      const d = row ? reportDetails(row) : {};
+      const fields = [
+        {type:"number",name:"annee",label:"Année",value:d.annee || state.annualLedgers.energie.year,min:"2000",max:"2100",step:"1",required:true},
+        {type:"date",name:"date",label:"Date de la dépense",value:d.date || today(),required:true},
+        {name:"libelle",label:"Poste / objet",value:d.libelle || "",required:true},
+        {name:"fournisseur",label:"Fournisseur",value:d.fournisseur || ""},
+        {type:"number",name:"montant_ttc",label:"Montant TTC (€)",value:d.montant_ttc ?? "",min:"0",step:"0.01",required:true},
+        {type:"textarea",name:"observations",label:"Observations",value:d.observations || ""}
+      ];
+      openModal(id ? "Modifier une dépense énergie" : "Ajouter une dépense énergie",formHtml(fields,"documents","saveEnergyExpense"));
+      const form = $("#edit-form");
+      form.dataset.entryId = row?.id || "";
+    },
+    async saveEnergyExpense(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = new FormData(form);
+        const annee = Number(data.get("annee"));
+        const montant = Number(data.get("montant_ttc"));
+        if (!Number.isInteger(annee) || annee < 2000 || annee > 2100) throw new Error("Année invalide.");
+        if (!Number.isFinite(montant) || montant < 0) throw new Error("Montant TTC invalide.");
+        const libelle = String(data.get("libelle") || "").trim();
+        if (!libelle) throw new Error("Indiquez le poste ou l’objet de la dépense.");
+        const details = {type:"depense_energie_ligne",annee,date:data.get("date"),libelle,fournisseur:String(data.get("fournisseur")||"").trim(),montant_ttc:money(montant),observations:String(data.get("observations")||"").trim()};
+        const id = form.dataset.entryId;
+        await dbSave("documents",{...(id?{id}:{}),nom_fichier:libelle,categorie:ENERGY_ENTRY_CATEGORY,url:"",observations:JSON.stringify(details)});
+        state.annualLedgers.energie.year = String(annee);
+        closeModal();
+        await loadAnnualRecords("energie");
+        toast("Dépense énergie enregistrée");
+      } catch(error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
+    },
+    async deleteEnergyExpense(id) {
+      if (!ensureAdminAction()) return;
+      const row = (state.annualLedgers.energie.entries || []).find(item=>item.id===id);
+      if (!row || !await dbDelete("documents",id,"Supprimer cette dépense énergie ?")) return;
+      await loadAnnualRecords("energie");
+      toast("Dépense supprimée");
+    },
+    setPropertyTaxYear(year) {
+      state.propertyTaxYear = String(year);
+      render();
+    },
+    openPropertyTax(id) {
+      if (!ensureAdminAction()) return;
+      const row = state.propertyTaxes.find(item=>item.id===id);
+      const d = row ? propertyTaxDetails(row) : {};
+      const year = d.annee || state.propertyTaxYear || String(new Date().getFullYear());
+      const tenantOptions = state.data.locataires.map(tenant=>'<option value="'+escapeHtml(tenant.id)+'" '+(tenant.id===(row?.locataire_id||"")?'selected':'')+'>'+escapeHtml(localLabel("locataires",tenant.id))+'</option>').join("");
+      const html = '<form id="edit-form" class="form-grid" data-action="savePropertyTax">'+
+        '<label>Année<input type="number" name="annee" min="2000" max="2100" step="1" value="'+escapeHtml(year)+'" required onchange="App.propertyTaxTenantChanged(this.form)"></label>'+
+        '<label>Preneur<select name="locataire_id" required onchange="App.propertyTaxTenantChanged(this.form)"><option value="">Choisir un preneur</option>'+tenantOptions+'</select></label>'+
+        '<label>Local<select name="local_id" required></select></label><div id="property-tax-local-hint" class="table-sub field-full"></div>'+
+        '<label>Date de facturation<input type="date" name="date_facturation" value="'+escapeHtml(d.date_facturation||today())+'" required></label>'+
+        '<label>Montant de la taxe (€)<input type="number" name="montant" min="0" step="0.01" value="'+escapeHtml(d.montant??"")+'" required></label>'+
+        '<label class="notice info"><input type="checkbox" name="transmise" '+(d.transmise?'checked':'')+'> Facture transmise au preneur</label>'+
+        '<label class="notice info"><input type="checkbox" name="acquittee" '+(d.acquittee?'checked':'')+'> Taxe acquittée</label>'+
+        '<label class="field-full">Base contractuelle (clause du bail)<textarea name="base_contractuelle" required>'+escapeHtml(d.base_contractuelle||"")+'</textarea></label>'+
+        '<div class="form-actions"><button class="secondary" type="button" onclick="App.closeModal()">Annuler</button><button class="primary" type="submit">Enregistrer</button></div></form>';
+      openModal(id ? "Modifier une taxe foncière" : "Ajouter une taxe foncière",html);
+      const form = $("#edit-form");
+      form.dataset.taxId = row?.id || "";
+      this.propertyTaxTenantChanged(form,row?.local_id||"");
+    },
+    propertyTaxTenantChanged(form,preferredLocal) {
+      const tenantId = form.elements.locataire_id.value;
+      const year = Number(form.elements.annee.value);
+      const select = form.elements.local_id;
+      const hint = form.querySelector("#property-tax-local-hint");
+      let ids = tenantId ? propertyTaxLocalIds(tenantId,year) : [];
+      const savedLocal = preferredLocal || select.value;
+      if (savedLocal && !ids.includes(savedLocal) && state.data.locaux.some(local=>local.id===savedLocal)) ids.push(savedLocal);
+      if (!ids.length) ids = state.data.locaux.map(local=>local.id);
+      select.innerHTML = '<option value="">Choisir un local</option>'+ids.map(localId=>'<option value="'+escapeHtml(localId)+'">'+escapeHtml(localLabel("locaux",localId))+'</option>').join("");
+      const nextLocal = ids.includes(savedLocal) ? savedLocal : ids[0];
+      select.value = nextLocal || "";
+      if (!tenantId) hint.textContent = "Choisissez un preneur : le local lié au bail sera renseigné automatiquement.";
+      else if (ids.length === 1) hint.textContent = "Local repris automatiquement depuis le bail du preneur.";
+      else if (propertyTaxLocalIds(tenantId,year).length > 1) hint.textContent = "Plusieurs locaux correspondent aux baux de cette année : vérifiez le local sélectionné.";
+      else hint.textContent = "Aucun local trouvé dans les baux de cette année : choisissez le local concerné.";
+    },
+    async savePropertyTax(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = new FormData(form);
+        const year = Number(data.get("annee"));
+        const amount = Number(data.get("montant"));
+        const tenantId = String(data.get("locataire_id")||"");
+        const localId = String(data.get("local_id")||"");
+        const basis = String(data.get("base_contractuelle")||"").trim();
+        if (!Number.isInteger(year) || year<2000 || year>2100) throw new Error("Année invalide.");
+        if (!Number.isFinite(amount) || amount<0) throw new Error("Montant invalide.");
+        if (!tenantId || !localId) throw new Error("Choisissez un preneur et son local.");
+        if (!basis) throw new Error("Indiquez la base contractuelle de refacturation.");
+        const details = {annee:year,date_facturation:data.get("date_facturation"),montant:money(amount),transmise:form.elements.transmise.checked,acquittee:form.elements.acquittee.checked,base_contractuelle:basis};
+        const tenant = tenantById(tenantId);
+        const local = state.data.locaux.find(item=>item.id===localId);
+        const record = { ...(form.dataset.taxId?{id:form.dataset.taxId}:{}), nom_fichier:"Taxe fonciere "+year+" "+localLabel("locataires",tenantId), categorie:PROPERTY_TAX_CATEGORY, url:"", locataire_id:tenantId, local_id:localId, observations:JSON.stringify(details) };
+        if (!tenant || !local) throw new Error("Preneur ou local introuvable. Actualisez la page puis réessayez.");
+        await dbSave("documents",record);
+        state.propertyTaxYear = String(year);
+        closeModal();
+        await loadPropertyTaxes();
+        toast("Taxe foncière enregistrée");
+      } catch(error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
+    },
+    async deletePropertyTax(id) {
+      if (!ensureAdminAction()) return;
+      const row = state.propertyTaxes.find(item=>item.id===id);
+      if (!row || !await dbDelete("documents",id,"Supprimer cette ligne de taxe foncière ?")) return;
+      await loadPropertyTaxes();
+      toast("Ligne de taxe foncière supprimée");
     },
     openAnnualForm(kind,year,postKey) {
       if (!ensureAdminAction() || !state.annualLedgers[kind]) return;
