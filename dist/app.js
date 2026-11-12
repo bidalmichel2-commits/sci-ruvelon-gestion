@@ -29,6 +29,7 @@
     travauxSearch: "",
     travauxOrigin: "",
     entretienCategorie: "",
+    etudeRecherche: "",
     reportRecords: [],
     reportId: "",
     reportsLoading: false,
@@ -377,6 +378,7 @@
     if (state.route === "baux") screen.innerHTML = renderBaux();
     if (state.route === "travaux") screen.innerHTML = renderTravauxScreen();
     if (state.route === "entretien") screen.innerHTML = renderEntretien();
+    if (state.route === "etudes") screen.innerHTML = renderEtudes();
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
     if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie"); }
@@ -898,7 +900,7 @@
   }
 
   function renderTravaux() {
-    const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) })).filter(t => t.detail.rubrique !== "entretien");
+    const all = state.data.travaux.map(t => ({ ...t, detail: travauxDetails(t) })).filter(t => !["entretien","etude"].includes(t.detail.rubrique));
     const years = [...new Set(all.map(t => String(t.detail.annee || "Non programme")))].sort();
     const statuses = [...new Set([...travauxStatuses, ...all.map(t => t.statut)])];
     const query = state.travauxSearch.toLocaleLowerCase("fr");
@@ -934,7 +936,7 @@
         }).join("")}</div>
       </div>
       <div class="panel works-panel">
-        <div class="panel-head"><h3>${rows.length} travaux / études</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
+        <div class="panel-head"><h3>${rows.length} travaux du bâtiment</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
         <div class="toolbar works-filters">
           <select aria-label="Origine des travaux" onchange="App.filterTravaux('travauxOrigin',this.value)"><option value="">Toutes les origines</option>${Object.entries(travauxOrigins).map(([value,label])=>`<option value="${value}" ${state.travauxOrigin===value?"selected":""}>${label}</option>`).join("")}</select>
           <input type="search" aria-label="Rechercher des travaux" placeholder="Rechercher travaux, lieu, entreprise" value="${escapeHtml(state.travauxSearch)}" onchange="App.filterTravaux('travauxSearch',this.value)">
@@ -1058,6 +1060,40 @@
     return { annee: row.date_prevue ? Number(row.date_prevue.slice(0,4)) : null, localisation: "", notes: row.observations || "", devis_ht: null };
   }
 
+  const etudeStatuses = ["À étudier","En cours","Terminée","Reportée","Abandonnée"];
+
+  function etudePeriod(detail) {
+    const start = fmtDate(detail.etude_debut);
+    const end = fmtDate(detail.etude_fin);
+    if (start && end) return `Du ${start} au ${end}`;
+    if (start) return `À partir du ${start}`;
+    return end ? `Échéance : ${end}` : detail.etude_periode || "À définir";
+  }
+
+  function renderEtudes() {
+    setTitle("Études");
+    const query = state.etudeRecherche.toLocaleLowerCase("fr");
+    const rows = state.data.travaux.map(t=>({...t,detail:travauxDetails(t)}))
+      .filter(t=>t.detail.rubrique==="etude" && [t.titre,t.description,t.detail.localisation,t.detail.etude_observations].join(" ").toLocaleLowerCase("fr").includes(query))
+      .sort((a,b)=>String(a.detail.etude_fin || "9999").localeCompare(String(b.detail.etude_fin || "9999")) || a.titre.localeCompare(b.titre,"fr"));
+    const amount = value => value == null ? "Non renseigné" : euro(value)+" HT";
+    return `<section class="desktop-wrap panel works-panel etudes-panel">
+      <div class="panel-head"><h3>Études à mener</h3>${adminHtml('<button class="primary" onclick="App.openEtude()">Ajouter une étude</button>')}</div>
+      <div class="toolbar"><input type="search" aria-label="Rechercher une étude" placeholder="Rechercher une étude" value="${escapeHtml(state.etudeRecherche)}" onchange="App.filterEtudes(this.value)"></div>
+      <div class="list">${rows.length ? rows.map(t=>{
+        const d=t.detail;
+        const linked=state.data.travaux.find(w=>w.id===d.etude_travaux_id);
+        return `<article class="row"><div class="row-main"><div><div class="row-title">${escapeHtml(t.titre)}</div><div class="row-sub">${escapeHtml([d.localisation || localLabel("locaux",t.local_id),t.entreprise].filter(Boolean).join(" · "))}</div></div><span class="chip">${escapeHtml(t.statut)}</span></div>
+          <div><strong>Problématique</strong><div class="row-sub">${escapeHtml(t.description || "À préciser")}</div></div>
+          <div class="works-amounts"><span>Période<b>${escapeHtml(etudePeriod(d))}</b></span><span>Coût estimé<b>${d.etude_cout_estime_ht==null && d.etude_cout_indique ? euro(d.etude_cout_indique)+" (HT/TTC à préciser)" : amount(d.etude_cout_estime_ht)}</b></span><span>Coût réel<b>${amount(d.etude_cout_reel_ht)}</b></span></div>
+          ${linked?`<div class="row-sub">Travaux associés : ${escapeHtml(linked.titre)}</div>`:""}
+          <details class="works-details"><summary>Observations détaillées</summary><p>${escapeHtml(d.etude_observations || d.notes || "Aucune observation")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}</details>
+          ${adminHtml(`<div class="actions"><button onclick="App.openEtude('${t.id}')">Modifier</button></div>`)}
+        </article>`;
+      }).join("") : '<div class="empty">Aucune étude</div>'}</div>
+    </section>`;
+  }
+
   function travauxOrigin(row) {
     const d = row.detail || travauxDetails(row);
     return Object.hasOwn(travauxOrigins,d.origine) ? d.origine : (String(d.source_key || "").startsWith("ruvelon_travaux_v2_") ? "base" : "nouveau");
@@ -1068,7 +1104,7 @@
     const ppi = Object.entries(d.ppi || {}).filter(([,value])=>Number(value)).map(([year,value])=>`${year} : ${euro(value)} HT`).join(" / ");
     const origin = travauxOrigin(t);
     const originBadge = `<div class="chips"><span class="chip ${origin==="nouveau"?"orange":""}">${travauxOrigins[origin]}</span>${!d.annee && !t.date_prevue?'<span class="chip">Date à définir</span>':""}</div>`;
-    return originBadge + `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}${d.etude?`<p><b>Étude associée :</b> ${escapeHtml(d.etude.filter(v=>v!==null).join(" · "))}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
+    return originBadge + `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
   }
 
   function renderRemunerationScreen() {
@@ -1325,6 +1361,7 @@
         else if (action === "savePassword") await window.App.savePassword(form);
         else if (action === "saveReport") await window.App.saveReport(form);
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
+        else if (action === "saveEtude") await window.App.saveEtude(form);
         else await window.App.save(form.dataset.table, form);
       });
     }
@@ -1362,7 +1399,7 @@
     if (f.type === "select") {
       return `<label>${escapeHtml(f.label)}<select name="${f.name}" ${attrs}>${f.options.map((o) => `<option value="${escapeHtml(o.value)}" ${String(o.value) === String(f.value || "") ? "selected" : ""}>${escapeHtml(o.label)}</option>`).join("")}</select></label>`;
     }
-    if (f.type === "textarea") return `<label class="field-full">${escapeHtml(f.label)}<textarea name="${f.name}">${escapeHtml(f.value || "")}</textarea></label>`;
+    if (f.type === "textarea") return `<label class="field-full">${escapeHtml(f.label)}<textarea name="${f.name}" ${attrs}>${escapeHtml(f.value || "")}</textarea></label>`;
     if (f.type === "checkbox") return `<label class="notice info"><input type="checkbox" name="${f.name}" value="true" ${f.value ? "checked" : ""} ${attrs}> ${escapeHtml(f.label)}</label>`;
     return `<label>${escapeHtml(f.label)}<input type="${f.type || "text"}" name="${f.name}" value="${escapeHtml(f.value ?? "")}" ${attrs}></label>`;
   }
@@ -1718,6 +1755,7 @@
       state[field] = value;
       render();
     },
+    filterEtudes(value) { state.etudeRecherche = value.trim(); render(); },
     installApp() { $("#install-btn").click(); },
     async copyInstallLink() {
       const installUrl = `${location.origin}${location.pathname}`;
@@ -1977,6 +2015,7 @@
       if (!ensureAdminAction()) return;
       const r = state.data.travaux.find((x) => x.id === id) || { statut: travauxStatuses[0], priorite: "P4" };
       const d = travauxDetails(r);
+      if (d.rubrique === "etude") return this.openEtude(id);
       const rubrique = d.rubrique === "entretien" || (!r.id && state.route === "entretien") ? "entretien" : "travaux";
       openModal(rubrique === "entretien" ? "Entretien" : "Travaux", formHtml([
         { type: "hidden", name: "id", value: r.id || "" },
@@ -2015,6 +2054,53 @@
         field.disabled = !entretien;
         field.closest("label").hidden = !entretien;
       }
+    },
+    openEtude(id) {
+      if (!ensureAdminAction()) return;
+      const row = id ? state.data.travaux.find(t=>t.id===id) : {statut:etudeStatuses[0]};
+      if (!row) return;
+      const d = travauxDetails(row);
+      if (id && d.rubrique!=="etude") return;
+      const statuses = [...new Set([...etudeStatuses,row.statut])].filter(Boolean);
+      openModal(id ? "Modifier l’étude" : "Ajouter une étude",formHtml([
+        {type:"hidden",name:"id",value:row.id || ""},
+        {name:"titre",label:"Intitulé de l’étude",value:row.titre || "",required:true},
+        {type:"select",name:"statut",label:"Statut",value:row.statut,options:statuses.map(value=>({value,label:value}))},
+        {type:"textarea",name:"description",label:"Problématique concernée",value:row.description || "",required:true},
+        {type:"select",name:"local_id",label:"Local",value:row.local_id,options:options("locaux","Ensemble du bâtiment")},
+        {name:"localisation",label:"Lieu / sous-zone",value:d.localisation || ""},
+        {name:"entreprise",label:"Intervenant",value:row.entreprise || ""},
+        {name:"periode",label:"Précision sur la période",value:d.etude_periode || ""},
+        {type:"date",name:"debut",label:"Début de l’étude",value:d.etude_debut || ""},
+        {type:"date",name:"fin",label:"Fin / échéance de l’étude",value:d.etude_fin || ""},
+        {type:"number",name:"cout_estime",label:"Coût estimé de l’étude (€ HT)",value:d.etude_cout_estime_ht ?? "",step:"0.01",min:"0"},
+        {type:"number",name:"cout_reel",label:"Coût réel de l’étude (€ HT)",value:d.etude_cout_reel_ht ?? "",step:"0.01",min:"0"},
+        {type:"textarea",name:"observations",label:"Observations détaillées",value:d.etude_observations || d.notes || ""}
+      ],"travaux","saveEtude"));
+    },
+    async saveEtude(form) {
+      if (!ensureAdminAction() || !form.reportValidity()) return;
+      const submit = form.querySelector('[type="submit"]');
+      if (submit.disabled) return;
+      submit.disabled = true;
+      try {
+        const data = readForm(form);
+        const row = data.id ? state.data.travaux.find(t=>t.id===data.id) : {};
+        if (!row || (data.id && travauxDetails(row).rubrique!=="etude")) throw new Error("Étude introuvable.");
+        if (!data.titre.trim() || !data.description.trim()) throw new Error("Indiquez un intitulé et une problématique.");
+        if (data.debut && data.fin && data.fin<data.debut) throw new Error("L’échéance ne peut pas précéder le début de l’étude.");
+        const detail = {...travauxDetails(row),version_travaux:1,rubrique:"etude",localisation:data.localisation,
+          etude_debut:data.debut || null,etude_fin:data.fin || null,etude_periode:data.periode,
+          etude_cout_estime_ht:data.cout_estime==="" ? null : money(data.cout_estime),
+          etude_cout_reel_ht:data.cout_reel==="" ? null : money(data.cout_reel),etude_observations:data.observations};
+        await dbSave("travaux",{...(data.id ? {id:data.id} : {}),titre:data.titre.trim(),description:data.description.trim(),local_id:data.local_id || null,
+          entreprise:data.entreprise,statut:data.statut,observations:JSON.stringify(detail)});
+        state.data.travaux = await dbList("travaux");
+        closeModal();
+        render();
+        toast("Étude enregistrée");
+      } catch (error) { toast(error.message || "Enregistrement impossible."); }
+      finally { submit.disabled = false; }
     },
     async openRemuneration(id) {
       if (!ensureAdminAction()) return;

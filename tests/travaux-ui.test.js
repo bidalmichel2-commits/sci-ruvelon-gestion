@@ -146,6 +146,32 @@ async function run(viewport) {
     assert.equal(reclassified.montant_estime, 1200);
     await page.locator('[data-route="entretien"]').click();
     assert.match(await page.locator('#screen').innerText(), /Réfection toiture/);
+    await page.locator('[data-route="etudes"]').click();
+    await page.getByRole('button',{name:'Ajouter une étude'}).click();
+    await newForm.locator('[name="titre"]').fill('Diagnostic test');
+    await newForm.locator('[name="description"]').fill('Identifier la cause du désordre.');
+    await newForm.locator('[name="debut"]').fill('2027-02-01');
+    await newForm.locator('[name="fin"]').fill('2027-01-15');
+    await newForm.getByRole('button',{name:'Enregistrer'}).click();
+    await page.getByText("L’échéance ne peut pas précéder le début de l’étude.").waitFor();
+    await newForm.locator('[name="fin"]').fill('2027-02-15');
+    await newForm.locator('[name="cout_estime"]').fill('240.50');
+    await newForm.locator('[name="observations"]').fill('Prévoir une visite avec le prestataire.');
+    await newForm.getByRole('button',{name:'Enregistrer'}).click();
+    await page.getByText('Diagnostic test',{exact:true}).waitFor();
+    assert.match(await page.locator('#screen').innerText(), /Du 01\/02\/2027 au 15\/02\/2027/);
+    assert.match(await page.locator('#screen').innerText(), /240.50 EUR/);
+    await page.getByText('Observations détaillées',{exact:true}).click();
+    await page.getByText('Prévoir une visite avec le prestataire.',{exact:true}).waitFor();
+    const study = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t=>t.titre==='Diagnostic test'));
+    assert.equal(JSON.parse(study.observations).rubrique,'etude');
+    assert.equal(JSON.parse(study.observations).etude_cout_estime_ht,240.5);
+    assert.equal(JSON.parse(study.observations).etude_cout_reel_ht,null);
+    assert.equal(await page.locator("#screen").evaluate(e => e.scrollWidth > e.clientWidth + 1), false);
+    await page.screenshot({ path: path.join(os.tmpdir(), `ruvelon-etudes-${viewport.width}.png`) });
+    await page.locator('[data-route="travaux"]').click();
+    assert.doesNotMatch(await page.locator('#screen').innerText(), /Diagnostic test|240.50 EUR/);
+    assert.match(await page.locator('#screen').innerText(), /Fuite imprévue/);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 }
@@ -156,6 +182,6 @@ async function run(viewport) {
     await new Promise((resolve, reject) => { server.stdout.once("data", resolve); server.once("error", reject); });
     await run({ width: 1440, height: 900 });
     await run({ width: 390, height: 844 });
-    console.log("OK - travaux et entretien separes, ajout, classement et filtres desktop/mobile");
+    console.log("OK - travaux, entretien et etudes separes, saisie et filtres desktop/mobile");
   } finally { server.kill(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
