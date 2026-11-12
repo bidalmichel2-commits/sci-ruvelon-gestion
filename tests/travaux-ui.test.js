@@ -92,6 +92,7 @@ async function run(viewport) {
     assert.equal(await newForm.locator('[name="rubrique_travaux"]').inputValue(), 'entretien');
     await newForm.locator('[name="titre"]').fill('Contrôle chaudière');
     await newForm.locator('[name="categorie_entretien"]').selectOption('chaudiere');
+    await newForm.locator('[name="origine_travaux"]').selectOption('acte_avant_gerance');
     await newForm.locator('[name="frequence_entretien"]').selectOption('Annuel');
     await newForm.locator('[name="planification_travaux"]').selectOption('planifie');
     await newForm.locator('[name="date_prevue"]').fill('2027-02-12');
@@ -100,6 +101,7 @@ async function run(viewport) {
     await newForm.getByRole('button', { name: 'Enregistrer' }).click();
     await page.waitForFunction(() => document.getElementById('modal').hidden);
     assert.match(await page.locator('#screen').innerText(), /Contrôle chaudière/);
+    assert.match(await page.locator('#screen').innerText(), /Déjà acté avant ma gérance/);
     assert.match(await page.locator('#screen').innerText(), /Annuel/);
     assert.match(await page.locator('#screen').innerText(), /12\/02\/2027/);
     await page.getByLabel('Année entretien').selectOption('2027');
@@ -111,6 +113,7 @@ async function run(viewport) {
     await page.getByLabel('Catégorie d’entretien').selectOption('');
     const savedMaintenance = await page.evaluate(() => JSON.parse(localStorage.getItem('ruvelon_v3_travaux')).find(t=>t.titre==='Contrôle chaudière'));
     assert.equal(JSON.parse(savedMaintenance.observations).entretien_categorie, 'chaudiere');
+    assert.equal(JSON.parse(savedMaintenance.observations).origine, 'acte_avant_gerance');
     await page.getByRole('button',{name:'Saisir le réel : Entretien chaudière'}).click();
     assert.equal(await newForm.locator('[name="chaudiere_prevision"]').inputValue(),'178');
     await newForm.locator('[name="chaudiere_prevision"]').fill('180.5');

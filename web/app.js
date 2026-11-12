@@ -936,7 +936,7 @@
       <div class="panel works-panel">
         <div class="panel-head"><h3>${rows.length} travaux / études</h3>${adminHtml(`<button class="primary" onclick="App.openTravaux()">Ajouter</button>`)}</div>
         <div class="toolbar works-filters">
-          <select aria-label="Origine des travaux" onchange="App.filterTravaux('travauxOrigin',this.value)"><option value="">Toutes les origines</option><option value="base" ${state.travauxOrigin==="base"?"selected":""}>Base Matthieu</option><option value="nouveau" ${state.travauxOrigin==="nouveau"?"selected":""}>Nouveaux / imprévus</option></select>
+          <select aria-label="Origine des travaux" onchange="App.filterTravaux('travauxOrigin',this.value)"><option value="">Toutes les origines</option>${Object.entries(travauxOrigins).map(([value,label])=>`<option value="${value}" ${state.travauxOrigin===value?"selected":""}>${label}</option>`).join("")}</select>
           <input type="search" aria-label="Rechercher des travaux" placeholder="Rechercher travaux, lieu, entreprise" value="${escapeHtml(state.travauxSearch)}" onchange="App.filterTravaux('travauxSearch',this.value)">
           <select aria-label="Année travaux" onchange="App.filterTravaux('travauxYear',this.value)"><option value="">Toutes les années</option>${years.map(y=>`<option ${state.travauxYear===y?"selected":""}>${escapeHtml(y)}</option>`).join("")}</select>
           <select aria-label="Statut travaux" onchange="App.filterTravaux('travauxStatus',this.value)"><option value="">Tous les statuts</option>${statuses.map(s=>`<option ${state.travauxStatus===s?"selected":""}>${escapeHtml(s)}</option>`).join("")}</select>
@@ -948,6 +948,7 @@
 
   const entretienCategories = { menage: "Ménage et nettoyage", chaudiere: "Entretien chaudière", espaces_verts: "Espaces verts", relevage: "Poste de relevage", incendie: "Défense incendie", autre: "Autre entretien" };
   const entretienFrequences = ["Ponctuel", "Hebdomadaire", "Mensuel", "Trimestriel", "Semestriel", "Annuel"];
+  const travauxOrigins = {nouveau:"Nouveau / imprévu",base:"Base Matthieu",acte_avant_gerance:"Déjà acté avant ma gérance"};
   const travauxStatuses = ["0 - À chiffrer", "1 - Devis demandé", "2 - Devis reçu", "3 - Validé propriétaire", "4 - OS émis", "5 - En cours", "6 - Réceptionné", "7 - Soldé / Payé", "X - Reporté", "X - Abandonné"];
 
   function entretienForecast(rows, currentYear) {
@@ -1059,13 +1060,14 @@
 
   function travauxOrigin(row) {
     const d = row.detail || travauxDetails(row);
-    return d.origine || (String(d.source_key || "").startsWith("ruvelon_travaux_v2_") ? "base" : "nouveau");
+    return Object.hasOwn(travauxOrigins,d.origine) ? d.origine : (String(d.source_key || "").startsWith("ruvelon_travaux_v2_") ? "base" : "nouveau");
   }
 
   function travauxNotesHtml(t) {
     const d = t.detail || travauxDetails(t);
     const ppi = Object.entries(d.ppi || {}).filter(([,value])=>Number(value)).map(([year,value])=>`${year} : ${euro(value)} HT`).join(" / ");
-    const originBadge = `<div class="chips"><span class="chip ${travauxOrigin(t)==="base"?"":"orange"}">${travauxOrigin(t)==="base"?"Base Matthieu":"Nouveau / imprévu"}</span>${!d.annee && !t.date_prevue?'<span class="chip">Date à définir</span>':""}</div>`;
+    const origin = travauxOrigin(t);
+    const originBadge = `<div class="chips"><span class="chip ${origin==="nouveau"?"orange":""}">${travauxOrigins[origin]}</span>${!d.annee && !t.date_prevue?'<span class="chip">Date à définir</span>':""}</div>`;
     return originBadge + `<details class="works-details"><summary>Détail / décisions</summary><p>${escapeHtml(t.description || "")}</p>${d.note_matt?`<p><b>Annotation Matthieu :</b> ${escapeHtml(d.note_matt)}</p>`:""}${d.notes?`<p>${escapeHtml(d.notes)}</p>`:""}${d.imputation?`<p><b>Imputation :</b> ${escapeHtml(d.imputation)}</p>`:""}${ppi?`<p><b>PPI du fichier :</b> ${escapeHtml(ppi)}</p>`:""}${d.etude?`<p><b>Étude associée :</b> ${escapeHtml(d.etude.filter(v=>v!==null).join(" · "))}</p>`:""}<p>${escapeHtml(t.entreprise || "")}${t.date_realisation?` · Réception : ${fmtDate(t.date_realisation)}`:""}</p></details>`;
   }
 
@@ -1984,7 +1986,7 @@
         { type: "select", name: "frequence_entretien", label: "Fréquence", value: d.entretien_frequence || "", options: [{value:"",label:"À définir"},...entretienFrequences.map(x=>({value:x,label:x}))] },
         { type: "number", min: "0", step: "0.01", name: "budget_entretien", label: "Budget sans base HT/TTC (€)", value: d.budget_indique ?? "" },
         { type: "checkbox", name: "exclure_budget_entretien", label: "Exclure l’estimation du prévisionnel", value: d.entretien_exclure_budget === true },
-        { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: [{ value: "nouveau", label: "Nouveau / imprévu" }, { value: "base", label: "Base Matthieu" }] },
+        { type: "select", name: "origine_travaux", label: "Origine", value: travauxOrigin(r), options: Object.entries(travauxOrigins).map(([value,label])=>({value,label})) },
         { type: "select", name: "planification_travaux", label: "Planification", value: d.annee || r.date_prevue ? "planifie" : "indefini", options: [{ value: "indefini", label: "À définir" }, { value: "planifie", label: "Planifié" }], onchange: "App.setTravauxPlanning(this.form)" },
         { type: "number", min: "2000", step: "1", name: "annee_cible", label: "Année prévue", value: d.annee || "" },
         { name: "localisation_travaux", label: "Lieu / sous-zone", value: d.localisation || "" },
@@ -2103,7 +2105,7 @@
           details.budget_indique = data.budget_entretien === "" ? null : money(data.budget_entretien);
           details.entretien_exclure_budget = !!data.exclure_budget_entretien;
         }
-        details.origine = data.origine_travaux === "base" ? "base" : "nouveau";
+        details.origine = Object.hasOwn(travauxOrigins,data.origine_travaux) ? data.origine_travaux : "nouveau";
         if (data.planification_travaux === "indefini") { data.annee_cible = ""; data.date_prevue = null; }
         details.annee = data.annee_cible ? Number(data.annee_cible) : (data.date_prevue ? Number(data.date_prevue.slice(0,4)) : null);
         details.localisation = data.localisation_travaux;
