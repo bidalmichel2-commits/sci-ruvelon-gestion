@@ -11,8 +11,8 @@
   const ENERGY_POSTS = [
     ["eau", "Eau potable", ""],
     ["edf_communs", "EDF communs", ""],
-    ["compteur_2", "Électricité · Compteur 2", "RC4, RC5, RC6, RC7 et RC8"],
-    ["compteur_1", "Électricité · Compteur 1", "E2, E3, E5, E6 et E7"]
+    ["compteur_1", "Électricité · Compteur 1", "E2, E3, E5, E6 et E7"],
+    ["compteur_2", "Électricité · Compteur 2", "RC4, RC5, RC6, RC7 et RC8"]
   ];
   const PDF_DATA_PREFIX = "data:application/pdf;base64,";
   const REPORT_MAX_BYTES = 3 * 1024 * 1024;

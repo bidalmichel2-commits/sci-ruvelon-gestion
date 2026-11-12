@@ -37,6 +37,8 @@ async function run(viewport) {
     assert.match(await content(),/Compteur 1/);
     assert.match(await content(),/RC4, RC5, RC6, RC7 et RC8 · Compteur n° 123456789/);
     assert.match(await content(),/E2, E3, E5, E6 et E7 · Compteur n° 987654321/);
+    const listing = await content();
+    assert.ok(listing.indexOf("Électricité · Compteur 1") < listing.indexOf("Électricité · Compteur 2"));
     await page.getByRole("button",{name:"Saisir le réel : Eau potable"}).click();
     assert.equal(await page.locator('[name="eau_prevision"]').inputValue(),"100");
     assert.equal(await page.locator('[name="eau_reel"]').inputValue(),"");
