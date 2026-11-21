@@ -455,6 +455,61 @@
       .sort((a, b) => String(a.date_fin).localeCompare(String(b.date_fin)));
   }
 
+  function rentMonthsInYear(bail, year) {
+    if (bail.statut !== "Actif" || isSecondaryBail(bail)) return 0;
+    const yearStart = `${year}-01-01`;
+    const yearEnd = `${year}-12-31`;
+    const startDate = String(bail.date_debut || yearStart).slice(0, 10);
+    const endDate = String(bail.date_fin || yearEnd).slice(0, 10);
+    if (startDate > yearEnd || (endDate < yearStart && !bail.renouvellement_auto)) return 0;
+
+    const firstMonth = startDate > yearStart ? Number(startDate.slice(5, 7)) : 1;
+    const lastMonth = bail.renouvellement_auto || endDate >= yearEnd
+      ? 12
+      : endDate < yearStart ? 0 : Number(endDate.slice(5, 7));
+    return Math.max(0, lastMonth - firstMonth + 1);
+  }
+
+  function forecastAnnualRentHt(year) {
+    return money(state.data.baux.reduce((total, bail) => {
+      const months = rentMonthsInYear(bail, year);
+      return total + money(bail.loyer_ht) * months;
+    }, 0));
+  }
+
+  function renderAnnualRentSummary() {
+    const currentYear = Number(String(state.month).slice(0, 4)) || new Date().getFullYear();
+    const forecastYear = currentYear + 1;
+    const totals = new Map();
+    state.data.loyers_mensuels.forEach((row) => {
+      const year = String(row.mois || "").slice(0, 4);
+      if (!/^\d{4}$/.test(year)) return;
+      totals.set(year, money((totals.get(year) || 0) + money(row.loyer_ht)));
+    });
+    totals.set(String(currentYear), totals.get(String(currentYear)) || 0);
+    totals.set(String(forecastYear), totals.get(String(forecastYear)) || 0);
+
+    const years = [...totals.keys()].sort((a, b) => Number(b) - Number(a));
+    const rows = years.map((year) => {
+      const forecast = Number(year) === forecastYear ? forecastAnnualRentHt(forecastYear) : null;
+      return `<tr><td><strong>${year}</strong>${Number(year) === forecastYear ? ` <span class="chip orange">Prévision</span>` : ""}</td>
+        <td class="num">${euro(totals.get(year))}</td>
+        <td class="num">${forecast === null ? "-" : `<strong>${euro(forecast)}</strong>`}</td></tr>`;
+    }).join("");
+    const mobileRows = years.map((year) => {
+      const forecast = Number(year) === forecastYear ? forecastAnnualRentHt(forecastYear) : null;
+      return `<div class="row"><div class="row-main"><div class="row-title">${year}${Number(year) === forecastYear ? " · Prévision" : ""}</div></div>
+        <div class="chips"><span class="chip">Loyers enregistrés HT hors charges ${euro(totals.get(year))}</span>${forecast === null ? "" : `<span class="chip orange">Prévision HT ${euro(forecast)}</span>`}</div></div>`;
+    }).join("");
+
+    return `<div class="panel annual-rent-panel">
+      <div class="panel-head"><div><h3>Récapitulatif annuel des loyers HT hors charges</h3><div class="table-sub">Loyers enregistrés par année et estimation sur les baux actifs pour ${forecastYear}</div></div></div>
+      <div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th class="num">Loyers enregistrés · HT hors charges</th><th class="num">Prévision · HT hors charges</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="list mobile-list">${mobileRows}</div>
+      <div class="table-sub">Les loyers enregistrés incluent les factures suivies, payées ou non. La prévision suppose des loyers inchangés, le maintien des baux actifs et la poursuite des renouvellements automatiques. Elle ne tient pas compte d’une vacance ni d’une hausse de loyer.</div>
+    </div>`;
+  }
+
   function renderDashboard() {
     setTitle("Tableau de bord");
     const rows = getMonthRows();
@@ -491,6 +546,7 @@
             <span class="chip green">${payDone} paiement(s) pointes</span>
           </div>
         </div>
+        ${renderAnnualRentSummary()}
         <div class="panel">
           <div class="panel-head"><h3>Routine MEG</h3></div>
           <div class="notice info">1. Je fais la facture dans MEG. 2. Je coche MEG ici. 3. Quand le virement arrive, je coche Paye.</div>
