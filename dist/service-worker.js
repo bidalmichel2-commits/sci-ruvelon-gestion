@@ -1,9 +1,9 @@
-const CACHE_NAME = "sci-ruvelon-gestion-3-v48";
+const CACHE_NAME = "sci-ruvelon-gestion-3-v49";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css?v=26",
-  "./app.js?v=50",
+  "./app.js?v=51",
   "./config.js",
   "./install-qr.png",
   "./icon-192.png",

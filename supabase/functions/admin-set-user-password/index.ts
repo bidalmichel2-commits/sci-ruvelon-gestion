@@ -85,7 +85,16 @@ Deno.serve(async (req: Request) => {
       targetUser = data.users.find((user) => user.email?.toLowerCase() === targetEmail) || null;
       if (data.users.length < 1000) break;
     }
-    if (!targetUser) return json({ error: "Compte de connexion Supabase introuvable." }, 404, origin);
+    if (!targetUser) {
+      const { data: created, error: createError } = await adminClient.auth.admin.createUser({
+        email: targetEmail,
+        password: newPassword,
+        email_confirm: true,
+      });
+      if (createError) throw createError;
+      if (!created.user) throw new Error("Supabase n’a pas confirmé la création du compte.");
+      return json({ ok: true, created: true }, 200, origin);
+    }
 
     const { error: updateError } = await adminClient.auth.admin.updateUserById(targetUser.id, { password: newPassword });
     if (updateError) throw updateError;

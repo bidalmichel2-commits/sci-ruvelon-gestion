@@ -210,6 +210,14 @@
   }
 
   async function loadAll() {
+    if (state.profile?.role === "tenant") {
+      for (const table of ["locaux","locataires","baux","loyers_mensuels"]) state.data[table] = await dbList(table);
+      state.data.travaux = [];
+      state.data.remuneration_gerant = [];
+      state.tenantDocuments = await dbList("documents");
+      state.tenantTaxes = await dbDocumentMetadata([PROPERTY_TAX_CATEGORY]);
+      return;
+    }
     for (const table of tables) state.data[table] = await dbList(table);
   }
 
@@ -228,7 +236,7 @@
     const email = String(state.user ? state.user.email : "").toLowerCase();
     const { data, error } = await sb
       .from("app_users")
-      .select("email,nom,role,actif")
+      .select("*")
       .eq("email", email)
       .maybeSingle();
     if (error) throw error;
@@ -241,11 +249,16 @@
 
   function updateUserChrome() {
     const name = state.profile ? state.profile.nom : "Utilisateur";
-    const role = state.isAdmin ? "Administrateur" : "Lecture seule";
+    const role = state.isAdmin ? "Administrateur" : state.profile?.role === "tenant" ? "Espace locataire" : "Lecture seule";
     const nameEl = $("#sidebar-user-name");
     const roleEl = $("#sidebar-user-role");
     if (nameEl) nameEl.textContent = name;
     if (roleEl) roleEl.textContent = role;
+    document.querySelectorAll(".app-nav button").forEach(button => {
+      button.hidden = state.profile?.role === "tenant"
+        ? button.dataset.route !== "espace-locataire"
+        : button.dataset.route === "espace-locataire" || (button.dataset.route === "utilisateurs" && !canManageUsers());
+    });
   }
 
   function adminHtml(html) {
@@ -254,6 +267,10 @@
 
   function canManageUsers() {
     return state.isAdmin && String(state.profile?.email || "").toLowerCase() === String(cfg.adminEmail || "").toLowerCase();
+  }
+
+  function tenantPortalSchemaReady() {
+    return Boolean(state.profile && Object.prototype.hasOwnProperty.call(state.profile,"locataire_id"));
   }
 
   function canContribute() {
@@ -388,6 +405,15 @@
     await loadCurrentProfile();
     updateUserChrome();
     await loadAll();
+    if (state.profile.role === "tenant") {
+      if (!state.profile.locataire_id) throw new Error("Aucun dossier locataire n’est associé à ce compte. Contactez la SCI.");
+      state.route = "espace-locataire";
+      state.tenantDetailId = state.profile.locataire_id;
+      state.tenantRelatedLoading = false;
+    } else {
+      state.route = "dashboard";
+      state.tenantDetailId = "";
+    }
     $("#login").hidden = true;
     $("#app").hidden = false;
     setupNav();
@@ -412,6 +438,7 @@
 
   function render() {
     const screen = $("#screen");
+    if (state.route === "espace-locataire") screen.innerHTML = renderTenantDetail();
     if (state.route === "dashboard") screen.innerHTML = renderDashboard();
     if (state.route === "pointage") screen.innerHTML = renderPointage();
     if (state.route === "locaux") screen.innerHTML = state.localDetailId ? renderLocalDetail() : renderLocaux();
@@ -957,10 +984,12 @@
       state.tenantDetailId = "";
       return renderLocataires();
     }
-    setTitle("Locataires");
+    setTitle(state.profile?.role === "tenant" ? "Mon espace" : "Locataires");
     const year = Number(state.tenantDetailYear) || Number(currentMonth().slice(0,4));
     const leases = state.data.baux.filter(row => row.locataire_id === tenant.id)
       .sort((a,b) => String(b.date_debut || "").localeCompare(String(a.date_debut || "")));
+    const localRows = [...new Set(leases.map(row => row.local_id).filter(Boolean))]
+      .map(id => state.data.locaux.find(local => local.id === id)).filter(Boolean);
     const summary = tenantLeaseSummary(tenant.id);
     const rents = state.data.loyers_mensuels.filter(row => row.locataire_id === tenant.id && String(row.mois || "").slice(0,4) === String(year))
       .sort((a,b) => String(b.mois || "").localeCompare(String(a.mois || "")));
@@ -1019,11 +1048,19 @@
       (row.url ? '<a class="table-action" href="' + escapeHtml(row.url) + '" target="_blank" rel="noopener">Ouvrir</a>' : "") +
       '</div>' + (row.observations ? '<div class="row-sub">' + escapeHtml(row.observations) + '</div>' : "") + '</article>').join("") + '</div>' :
       '<div class="empty">Aucun document associé hors baux.</div>';
-    return '<div class="desktop-wrap local-detail-screen"><div class="local-detail-top"><button class="table-action" onclick="App.backToLocataires()">← Tous les locataires</button>' +
+    const unitsHtml = localRows.length ? '<section class="panel"><div class="panel-head"><h3>Locaux associés</h3></div><div class="local-detail-grid">' +
+      localRows.map(local => '<article class="row"><div class="row-main"><strong>' + escapeHtml(local.code_local || "Local") + ' · ' +
+        escapeHtml(local.designation || "") + '</strong><span class="chip">' + escapeHtml(local.statut || "Statut à préciser") +
+        '</span></div><div class="chips"><span class="chip">' + escapeHtml(local.niveau || "Niveau non précisé") +
+        '</span><span class="chip">' + Number(local.surface_m2 || 0).toFixed(2) + ' m²</span></div></article>').join("") +
+      '</div></section>' : "";
+    return '<div class="desktop-wrap local-detail-screen"><div class="local-detail-top">' +
+      (state.profile?.role === "tenant" ? "" : '<button class="table-action" onclick="App.backToLocataires()">← Tous les locataires</button>') +
       adminHtml('<button class="secondary" onclick="App.openLocataire(\'' + escapeHtml(tenant.id) + '\')">Modifier le locataire</button>') +
       '</div><section class="panel local-detail-heading"><div><div class="eyebrow">Fiche locataire</div><h2>' + escapeHtml(localLabel("locataires",tenant.id)) +
       '</h2><div class="table-sub">' + escapeHtml(tenant.activite || tenant.type || "") + '</div></div><span class="chip ' +
       (tenant.statut === "Actif" ? "green" : "") + '">' + escapeHtml(tenant.statut || "À préciser") + '</span></section>' +
+      unitsHtml +
       '<section class="panel"><div class="panel-head"><h3>Coordonnées et situation</h3></div><div class="local-detail-items">' +
       '<div class="local-detail-item"><span>Téléphone</span><strong>' + (tenant.telephone ? '<a href="tel:' + escapeHtml(phoneDialValue(tenant.telephone)) + '">' + escapeHtml(tenant.telephone) + '</a>' : "—") +
       '</strong></div><div class="local-detail-item"><span>E-mail</span><strong>' + (tenant.email ? '<a href="mailto:' + escapeHtml(tenant.email) + '">' + escapeHtml(tenant.email) + '</a>' : "—") +
@@ -1045,7 +1082,7 @@
       '</h3><div class="table-sub">Provisions pointées et taxe foncière refacturée</div></div></div><div class="toolbar"><span>Provisions : <strong>' + euro(provisions) +
       '</strong></span><span>Taxe foncière refacturée : <strong>' + euro(taxTotal) + '</strong></span></div>' +
       (state.tenantRelatedLoading ? '<div class="empty">Chargement des refacturations…</div>' : taxRows) +
-      '<div class="notice info">Les dépenses communes d’eau, d’énergie et d’entretien ne sont pas ventilées automatiquement par locataire. Seuls les montants réellement pointés ou refacturés sont affichés.</div></section></div>';
+      '<div class="notice info">Les dépenses communes d’eau, d’énergie et d’entretien ne sont pas ventilées automatiquement par locataire. Les consommations individuelles ne sont donc pas encore disponibles ici. Seuls les montants réellement pointés ou refacturés sont affichés.</div></section></div>';
   }
 
   async function dbDocumentMetadata(categories) {
@@ -1433,13 +1470,16 @@
               const isSelf = email.toLowerCase() === String(state.profile?.email || "").toLowerCase();
               return `<article class="user-admin-row">
                 <div class="user-admin-main"><strong>${escapeHtml(user.nom)}</strong><span>${email}</span></div>
-                <div class="user-admin-meta"><span class="chip">${user.role === "admin" ? "Administrateur" : "Lecture seule"}</span><span class="chip ${user.actif ? "green" : "orange"}">${user.actif ? "Actif" : "Désactivé"}</span></div>
+                <div class="user-admin-meta"><span class="chip">${user.role === "admin" ? "Administrateur" : user.role === "tenant" ? "Locataire" : "Lecture seule"}</span>${user.role === "tenant" ? `<span class="chip">${escapeHtml(localLabel("locataires",user.locataire_id) || "Dossier non associé")}</span>` : ""}<span class="chip ${user.actif ? "green" : "orange"}">${user.actif ? "Actif" : "Désactivé"}</span></div>
                 <div class="user-admin-actions"><button class="table-action" onclick="App.openUserForm('${emailArg}')">Gérer</button><button class="secondary" onclick="App.openUserPassword('${emailArg}')">Définir mot de passe</button><button class="secondary" onclick="App.sendUserPasswordLink('${emailArg}')">Envoyer un lien</button></div>
                 ${isSelf ? '<small class="user-admin-self">Compte administrateur connecté</small>' : ""}
               </article>`;
             }).join("")}</div>`
           : '<div class="empty">Aucun utilisateur autorisé.</div>';
-    return `<div class="desktop-wrap"><section class="panel user-admin-panel"><div class="panel-head"><h3>Comptes autorisés</h3><button class="table-action" onclick="App.loadUsers()">Actualiser</button></div><div class="notice info">Tu peux gérer les droits, définir un mot de passe et envoyer un lien de réinitialisation. Le mot de passe choisi n’est pas conservé ni affiché après validation.</div>${body}</section></div>`;
+    const portalAction = tenantPortalSchemaReady()
+      ? '<button class="primary" onclick="App.openNewTenantAccess()">Ajouter un accès locataire</button>'
+      : '<span class="chip orange">Portail locataire à initialiser</span>';
+    return `<div class="desktop-wrap"><section class="panel user-admin-panel"><div class="panel-head"><h3>Comptes autorisés</h3><div class="actions">${portalAction}<button class="table-action" onclick="App.loadUsers()">Actualiser</button></div></div><div class="notice info">Les mots de passe ne sont pas conservés ni consultables après leur définition. L’accès locataire est limité à un seul dossier preneur.</div>${body}</section></div>`;
   }
 
   async function loadUsers() {
@@ -1454,7 +1494,7 @@
     state.usersError = "";
     if (state.route === "utilisateurs") render();
     try {
-      const { data, error } = await sb.from("app_users").select("email,nom,role,actif,created_at").order("nom", { ascending: true });
+      const { data, error } = await sb.from("app_users").select("*").order("nom", { ascending: true });
       if (error) throw error;
       state.users = data || [];
     } catch (error) {
@@ -1479,11 +1519,26 @@
       fields.push({ type: "hidden", name: "role", value: user.role }, { type: "hidden", name: "actif", value: "true" });
     } else {
       fields.push(
-        { type: "select", name: "role", label: "Droits", value: user.role, options: [{ value: "lecture", label: "Lecture seule" }, { value: "admin", label: "Administrateur" }] },
+        { type: "select", name: "role", label: "Droits", value: user.role, options: [{ value: "lecture", label: "Lecture seule" }, ...(tenantPortalSchemaReady() ? [{ value: "tenant", label: "Locataire" }] : []), { value: "admin", label: "Administrateur" }] },
+        ...(tenantPortalSchemaReady() ? [{ type: "select", name: "locataire_id", label: "Dossier locataire associé", value: user.locataire_id || "", options: [{ value: "", label: "Aucun" }, ...state.data.locataires.map(row => ({value:row.id,label:localLabel("locataires",row.id)}))] }] : []),
         { type: "checkbox", name: "actif", label: "Compte actif", value: user.actif }
       );
     }
     openModal(`Gérer ${user.nom}`, formHtml(fields, "", "saveUser"));
+  }
+
+  function openNewTenantAccess() {
+    if (!canManageUsers()) return toast("Gestion des utilisateurs réservée à Michel Bidal.");
+    if (!tenantPortalSchemaReady()) return toast("La base doit d’abord être préparée pour le portail locataire.");
+    if (!state.data.locataires.length) return toast("Ajoutez d’abord le dossier locataire dans l’onglet Locataires.");
+    openModal("Créer un accès locataire", formHtml([
+      { type: "email", name: "email", label: "Adresse e-mail de connexion", value: "", required: true, autocomplete: "email" },
+      { name: "nom", label: "Nom affiché", value: "", required: true },
+      { type: "select", name: "locataire_id", label: "Dossier locataire", value: "", required: true,
+        options: [{value:"",label:"Choisir un locataire"}, ...state.data.locataires.map(row => ({value:row.id,label:localLabel("locataires",row.id)}))] },
+      { type: "hidden", name: "role", value: "tenant" },
+      { type: "hidden", name: "actif", value: "true" }
+    ], "", "saveUser"));
   }
 
   function openUserPassword(email) {
@@ -1526,16 +1581,44 @@
     const data = Object.fromEntries(new FormData(form).entries());
     const email = String(data.email || "").trim().toLowerCase();
     const current = state.users.find((user) => user.email.toLowerCase() === email);
-    if (!current) return toast("Utilisateur introuvable.");
+    if (!current) {
+      if (!tenantPortalSchemaReady()) return toast("La base doit d’abord être préparée pour le portail locataire.");
+      const tenantId = String(data.locataire_id || "");
+      if (!email || !String(data.nom || "").trim() || data.role !== "tenant" || !tenantId) {
+        return toast("Renseignez l’e-mail, le nom et le dossier du locataire.");
+      }
+      if (state.users.some(user => user.role === "tenant" && user.locataire_id === tenantId)) {
+        return toast("Ce dossier locataire possède déjà un compte.");
+      }
+      try {
+        const { error } = await sb.from("app_users").insert({
+          email, nom: String(data.nom).trim(), role: "tenant", locataire_id: tenantId, actif: true
+        });
+        if (error) throw error;
+        closeModal();
+        await loadUsers();
+        toast("Accès créé. Définissez son mot de passe dans la liste.");
+      } catch (error) {
+        toast(error.message || "Création du compte impossible.");
+      }
+      return;
+    }
     const isSelf = email === String(state.profile?.email || "").toLowerCase();
     const role = isSelf ? current.role : String(data.role || "lecture");
     const actif = isSelf ? true : !!form.elements.actif.checked;
+    const locataireId = role === "tenant" ? String(data.locataire_id || "") : null;
+    if (role === "tenant" && !locataireId) return toast("Associez ce compte à un dossier locataire.");
+    if (role === "tenant" && state.users.some(user => user.role === "tenant" && user.locataire_id === locataireId && user.email.toLowerCase() !== email)) {
+      return toast("Ce dossier locataire possède déjà un compte.");
+    }
     const demotesAdmin = current.role === "admin" && current.actif && (!actif || role !== "admin");
     if (demotesAdmin && state.users.filter((user) => user.role === "admin" && user.actif).length <= 1) {
       return toast("Impossible de désactiver le dernier administrateur.");
     }
     try {
-      const { error } = await sb.from("app_users").update({ nom: String(data.nom || "").trim(), role, actif }).eq("email", email);
+      const update = { nom: String(data.nom || "").trim(), role, actif };
+      if (tenantPortalSchemaReady()) update.locataire_id = locataireId;
+      const { error } = await sb.from("app_users").update(update).eq("email", email);
       if (error) throw error;
       closeModal();
       await loadUsers();
@@ -2365,13 +2448,17 @@
       button.setAttribute("aria-label", `${visible ? "Masquer" : "Afficher"} le mot de passe`);
     },
     go(route) {
+      if (state.profile?.role === "tenant" && route !== "espace-locataire") {
+        toast("Cet espace est réservé à votre dossier locataire.");
+        return;
+      }
       if (route === "utilisateurs" && !canManageUsers()) {
         toast("Gestion des utilisateurs réservée à Michel Bidal.");
         return;
       }
       state.route = route;
       state.localDetailId = "";
-      state.tenantDetailId = "";
+      state.tenantDetailId = state.profile?.role === "tenant" ? state.profile.locataire_id : "";
       if (route === "utilisateurs") {
         state.usersLoading = true;
         render();
@@ -2926,6 +3013,7 @@
     },
     loadUsers,
     openUserForm,
+    openNewTenantAccess,
     saveUser,
     openUserPassword,
     saveUserPassword,
