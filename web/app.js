@@ -29,6 +29,12 @@
     localDetailId: "",
     localDetailTab: "informations",
     localForecastYear: String(Number(currentMonth().slice(0, 4)) + 1),
+    tenantDetailId: "",
+    tenantDetailYear: String(new Date().getFullYear()),
+    tenantDocuments: [],
+    tenantTaxes: [],
+    tenantRelatedLoading: false,
+    tenantRelatedError: "",
     month: currentMonth(),
     year: String(new Date().getFullYear()),
     travauxYear: "",
@@ -409,7 +415,7 @@
     if (state.route === "dashboard") screen.innerHTML = renderDashboard();
     if (state.route === "pointage") screen.innerHTML = renderPointage();
     if (state.route === "locaux") screen.innerHTML = state.localDetailId ? renderLocalDetail() : renderLocaux();
-    if (state.route === "locataires") screen.innerHTML = renderLocataires();
+    if (state.route === "locataires") screen.innerHTML = state.tenantDetailId ? renderTenantDetail() : renderLocataires();
     if (state.route === "baux") screen.innerHTML = renderBaux();
     if (state.route === "travaux") screen.innerHTML = renderTravauxScreen();
     if (state.route === "entretien") screen.innerHTML = renderEntretien();
@@ -421,6 +427,36 @@
     if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie") + renderEnergyEntries(); }
     if (state.route === "taxes-foncieres") screen.innerHTML = renderPropertyTaxes();
     if (state.route === "plus") screen.innerHTML = renderPlus();
+    if (state.route === "locaux" && !state.localDetailId) {
+      const localRows = [...state.data.locaux].sort((a,b) => String(a.code_local || "").localeCompare(String(b.code_local || ""), "fr", {numeric:true}));
+      bindDetailRows(".desktop-table tbody tr", localRows, "viewLocal");
+      bindDetailRows(".mobile-list > .row", localRows, "viewLocal");
+    }
+    if (state.route === "locataires" && !state.tenantDetailId) {
+      const tenantRows = [...state.data.locataires].sort((a,b) => localLabel("locataires", a.id).localeCompare(localLabel("locataires", b.id), "fr"));
+      bindDetailRows(".desktop-table tbody tr", tenantRows, "viewTenant");
+      bindDetailRows(".mobile-list > .row", tenantRows, "viewTenant");
+    }
+  }
+
+  function bindDetailRows(selector, rows, method) {
+    document.querySelectorAll(selector).forEach((element,index) => {
+      const record = rows[index];
+      if (!record) return;
+      element.classList.add("clickable-row");
+      element.tabIndex = 0;
+      element.setAttribute("role","link");
+      element.addEventListener("click",event => {
+        if (event.target.closest("button,a,input,select,label")) return;
+        App[method](record.id);
+      });
+      element.addEventListener("keydown",event => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        if (event.target.closest("button,a,input,select,label")) return;
+        event.preventDefault();
+        App[method](record.id);
+      });
+    });
   }
 
   function getMonthRows() {
@@ -913,6 +949,103 @@
           }).join("") : `<div class="empty">Aucun locataire</div>`}</div>
         </div>
       </div>`;
+  }
+
+  function renderTenantDetail() {
+    const tenant = state.data.locataires.find(row => row.id === state.tenantDetailId);
+    if (!tenant) {
+      state.tenantDetailId = "";
+      return renderLocataires();
+    }
+    setTitle("Locataires");
+    const year = Number(state.tenantDetailYear) || Number(currentMonth().slice(0,4));
+    const leases = state.data.baux.filter(row => row.locataire_id === tenant.id)
+      .sort((a,b) => String(b.date_debut || "").localeCompare(String(a.date_debut || "")));
+    const summary = tenantLeaseSummary(tenant.id);
+    const rents = state.data.loyers_mensuels.filter(row => row.locataire_id === tenant.id && String(row.mois || "").slice(0,4) === String(year))
+      .sort((a,b) => String(b.mois || "").localeCompare(String(a.mois || "")));
+    const expected = sum(rents,"total_attendu");
+    const paid = sum(rents,"total_paye");
+    const balance = round2(Math.max(0,expected-paid));
+    const provisions = sum(rents,"charges_mensuelles");
+    const leaseIds = new Set(leases.map(row => row.id));
+    const localIds = new Set(leases.map(row => row.local_id).filter(Boolean));
+    const docs = state.tenantDocuments.filter(row => row.locataire_id === tenant.id || leaseIds.has(row.bail_id) || localIds.has(row.local_id));
+    const taxes = state.tenantTaxes.filter(row => row.locataire_id === tenant.id && Number(propertyTaxDetails(row).annee) === year);
+    const taxAmount = row => {
+      const d = propertyTaxDetails(row);
+      return Number(d.montant_ttc ?? ((Number(d.montant_ht)||Number(d.montant)||0)+(Number(d.montant_tva)||Number(d.tva)||0))) || 0;
+    };
+    const taxTotal = round2(taxes.reduce((total,row) => total + taxAmount(row),0));
+    const years = [...new Set([Number(currentMonth().slice(0,4)), ...state.data.loyers_mensuels
+      .filter(row => row.locataire_id === tenant.id).map(row => Number(String(row.mois || "").slice(0,4))).filter(Number.isInteger)])].sort((a,b) => b-a);
+    const options = years.map(item => '<option value="' + item + '" ' + (item === year ? "selected" : "") + '>' + item + '</option>').join("");
+    const rentRows = rents.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Mois</th><th>Local</th><th class="num">Loyer HT</th><th class="num">Loyer TTC</th><th class="num">Charges</th><th class="num">Attendu TTC</th><th class="num">Réglé</th><th class="num">Solde</th><th>Facture MEG</th><th>Règlement</th></tr></thead><tbody>' +
+      rents.map(row => '<tr><td>' + escapeHtml(monthLabel(row.mois)) + '</td><td>' + escapeHtml(localLabel("locaux",row.local_id) || "—") +
+        '</td><td class="num">' + euro(row.loyer_ht) + '</td><td class="num">' + euro(row.loyer_ttc) + '</td><td class="num">' + euro(row.charges_mensuelles) +
+        '</td><td class="num"><strong>' + euro(row.total_attendu) + '</strong></td><td class="num">' + euro(row.total_paye) + '</td><td class="num">' +
+        euro(Math.max(0,Number(row.total_attendu||0)-Number(row.total_paye||0))) + '</td><td><span class="chip ' + (row.facture_meg_faite ? "green" : "orange") +
+        '">' + (row.facture_meg_faite ? "Faite" : "À faire") + '</span></td><td><span class="chip ' + (row.paiement_controle ? "green" : "orange") +
+        '">' + (row.paiement_controle ? "Contrôlé" : "À suivre") + '</span></td></tr>').join("") + '</tbody></table></div>' +
+      '<div class="list mobile-list">' + rents.map(row => '<article class="row"><div class="row-main"><strong>' + escapeHtml(monthLabel(row.mois)) +
+        ' · ' + escapeHtml(localLabel("locaux",row.local_id) || "Local") + '</strong><strong>' + euro(row.total_attendu) + ' TTC</strong></div><div class="chips"><span class="chip">HT ' +
+        euro(row.loyer_ht) + '</span><span class="chip">Loyer TTC ' + euro(row.loyer_ttc) + '</span><span class="chip">Charges ' + euro(row.charges_mensuelles) +
+        '</span><span class="chip">Réglé ' + euro(row.total_paye) + '</span><span class="chip">Solde ' + euro(Math.max(0,Number(row.total_attendu||0)-Number(row.total_paye||0))) +
+        '</span></div><div class="chips"><span class="chip ' + (row.facture_meg_faite ? "green" : "orange") + '">MEG ' +
+        (row.facture_meg_faite ? "faite" : "à faire") + '</span><span class="chip ' + (row.paiement_controle ? "green" : "orange") + '">' +
+        (row.paiement_controle ? "Règlement contrôlé" : "Règlement à suivre") + '</span></div></article>').join("") + '</div>' :
+      '<div class="empty">Aucun pointage enregistré pour ' + year + '.</div>';
+    const leaseRows = leases.length ? leases.map(bail => '<article class="row"><div class="row-main"><div><strong>' +
+      escapeHtml(localLabel("locaux",bail.local_id) || "Local non rattaché") + '</strong><div class="row-sub">' + escapeHtml(bail.type_bail || "Bail") +
+      ' · ' + (fmtDate(bail.date_debut) || "Début à préciser") + ' → ' + (fmtDate(bail.date_fin) || "Sans date de fin") +
+      '</div></div><span class="chip ' + (bail.statut === "Actif" ? "green" : leaseChipClass(bail)) + '">' + escapeHtml(bail.statut || "À préciser") +
+      '</span></div><div class="chips"><span class="chip">Loyer HT ' + euro(bail.loyer_ht) + '</span><span class="chip">TVA ' +
+      Number(bail.tva || 0).toFixed(2) + '%</span><span class="chip">Charges ' + euro(bail.charges_mensuelles) + '</span><span class="chip">Dépôt ' +
+      euro(bail.depot_garantie) + '</span>' + (isSecondaryBail(bail) ? '<span class="chip orange">Local associé</span>' : "") +
+      (bail.renouvellement_auto ? '<span class="chip green">Renouvellement automatique</span>' : "") + '</div>' +
+      '<div class="actions">' + (leaseDocumentId(bail) ? '<button onclick="App.downloadLease(\'' + escapeHtml(bail.id) + '\',this)">Télécharger le bail</button>' : "") +
+      adminHtml('<button class="table-action" onclick="App.openBail(\'' + escapeHtml(bail.id) + '\')">Modifier</button>') + '</div></article>').join("") :
+      '<div class="empty">Aucun bail rattaché à ce locataire.</div>';
+    const taxRows = taxes.length ? '<div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Local</th><th>Période</th><th>Base contractuelle</th><th class="num">TTC</th><th>Suivi</th><th>Transmise</th><th>Acquittée</th></tr></thead><tbody>' +
+      taxes.map(row => { const d = propertyTaxDetails(row); return '<tr><td>' + escapeHtml(localLabel("locaux",row.local_id) || "—") + '</td><td>' +
+        escapeHtml(fmtDate(d.periode_debut)||"—") + ' → ' + escapeHtml(fmtDate(d.periode_fin)||"—") + '</td><td>' +
+        escapeHtml(d.base_contractuelle||"—") + '</td><td class="num">' + euro(taxAmount(row)) + '</td><td>' +
+        escapeHtml(d.statut || (d.acquittee || d.payee_preneur ? "Payé" : d.transmise ? "Transmise" : "À facturer")) +
+        '</td><td>' + (d.transmise ? "Oui" : "Non") + '</td><td>' + (d.acquittee || d.payee_preneur ? "Oui" : "Non") + '</td></tr>'; }).join("") +
+      '</tbody></table></div>' : '<div class="empty">Aucune taxe foncière refacturée en ' + year + '.</div>';
+    const docsRows = docs.length ? '<div class="list">' + docs.map(row => '<article class="row"><div class="row-main"><div><strong>' +
+      escapeHtml(row.nom_fichier || "Document") + '</strong><div class="row-sub">' + escapeHtml(row.categorie || "Document") + ' · ' +
+      escapeHtml(fmtDate(row.created_at) || "Date inconnue") + '</div></div>' +
+      (row.url ? '<a class="table-action" href="' + escapeHtml(row.url) + '" target="_blank" rel="noopener">Ouvrir</a>' : "") +
+      '</div>' + (row.observations ? '<div class="row-sub">' + escapeHtml(row.observations) + '</div>' : "") + '</article>').join("") + '</div>' :
+      '<div class="empty">Aucun document associé hors baux.</div>';
+    return '<div class="desktop-wrap local-detail-screen"><div class="local-detail-top"><button class="table-action" onclick="App.backToLocataires()">← Tous les locataires</button>' +
+      adminHtml('<button class="secondary" onclick="App.openLocataire(\'' + escapeHtml(tenant.id) + '\')">Modifier le locataire</button>') +
+      '</div><section class="panel local-detail-heading"><div><div class="eyebrow">Fiche locataire</div><h2>' + escapeHtml(localLabel("locataires",tenant.id)) +
+      '</h2><div class="table-sub">' + escapeHtml(tenant.activite || tenant.type || "") + '</div></div><span class="chip ' +
+      (tenant.statut === "Actif" ? "green" : "") + '">' + escapeHtml(tenant.statut || "À préciser") + '</span></section>' +
+      '<section class="panel"><div class="panel-head"><h3>Coordonnées et situation</h3></div><div class="local-detail-items">' +
+      '<div class="local-detail-item"><span>Téléphone</span><strong>' + (tenant.telephone ? '<a href="tel:' + escapeHtml(phoneDialValue(tenant.telephone)) + '">' + escapeHtml(tenant.telephone) + '</a>' : "—") +
+      '</strong></div><div class="local-detail-item"><span>E-mail</span><strong>' + (tenant.email ? '<a href="mailto:' + escapeHtml(tenant.email) + '">' + escapeHtml(tenant.email) + '</a>' : "—") +
+      '</strong></div><div class="local-detail-item"><span>Adresse</span><strong>' + escapeHtml([tenant.adresse,tenant.code_postal,tenant.ville].filter(Boolean).join(", ") || "—") +
+      '</strong></div><div class="local-detail-item"><span>Locaux</span><strong>' + escapeHtml(summary.locaux.join(" + ") || "Aucun") +
+      '</strong></div><div class="local-detail-item"><span>Début du bail</span><strong>' + (fmtDate(summary.dateDebut)||"—") +
+      '</strong></div><div class="local-detail-item"><span>Fin du bail</span><strong>' + (fmtDate(summary.dateFin)||"—") +
+      '</strong></div><div class="local-detail-item"><span>Loyer HT</span><strong>' + euro(summary.loyerHt) + '</strong></div><div class="local-detail-item"><span>Charges mensuelles</span><strong>' +
+      euro(summary.charges) + '</strong></div><div class="local-detail-item"><span>Total mensuel</span><strong>' + euro(summary.loyerTtc + summary.charges) +
+      '</strong></div></div><div class="local-observations"><strong>Observations</strong><p>' + escapeHtml(tenant.observations || "Aucune observation.") + '</p></div></section>' +
+      '<section class="panel"><div class="panel-head"><div><h3>Suivi factures et règlements · ' + year + '</h3><div class="table-sub">Pointage MEG et règlements</div></div><label>Année<select onchange="App.setTenantDetailYear(this.value)">' +
+      options + '</select></label></div><div class="cards"><div class="card"><small>Attendu TTC</small><strong>' + euro(expected) +
+      '</strong></div><div class="card green"><small>Réglé</small><strong>' + euro(paid) + '</strong></div><div class="card red"><small>Solde</small><strong>' +
+      euro(balance) + '</strong></div><div class="card"><small>Provisions de charges</small><strong>' + euro(provisions) + '</strong></div></div>' + rentRows + '</section>' +
+      '<section class="panel"><div class="panel-head"><h3>Baux · ' + leases.length + '</h3></div><div class="list">' + leaseRows + '</div>' +
+      (docs.length || state.tenantRelatedLoading || state.tenantRelatedError ? '<div class="panel-head"><h3>Documents associés</h3></div>' +
+      (state.tenantRelatedLoading ? '<div class="empty">Chargement…</div>' : state.tenantRelatedError ? '<div class="notice danger">' + escapeHtml(state.tenantRelatedError) + '</div>' : docsRows) : "") +
+      '</section><section class="panel"><div class="panel-head"><div><h3>Charges suivies · ' + year +
+      '</h3><div class="table-sub">Provisions pointées et taxe foncière refacturée</div></div></div><div class="toolbar"><span>Provisions : <strong>' + euro(provisions) +
+      '</strong></span><span>Taxe foncière refacturée : <strong>' + euro(taxTotal) + '</strong></span></div>' +
+      (state.tenantRelatedLoading ? '<div class="empty">Chargement des refacturations…</div>' : taxRows) +
+      '<div class="notice info">Les dépenses communes d’eau, d’énergie et d’entretien ne sont pas ventilées automatiquement par locataire. Seuls les montants réellement pointés ou refacturés sont affichés.</div></section></div>';
   }
 
   async function dbDocumentMetadata(categories) {
@@ -2238,6 +2371,7 @@
       }
       state.route = route;
       state.localDetailId = "";
+      state.tenantDetailId = "";
       if (route === "utilisateurs") {
         state.usersLoading = true;
         render();
@@ -2258,6 +2392,33 @@
       state.route = "locaux";
       state.localDetailId = id;
       state.localDetailTab = "informations";
+      render();
+    },
+    viewTenant(id) {
+      if (!state.data.locataires.some(tenant => tenant.id === id)) return;
+      state.route = "locataires";
+      state.tenantDetailId = id;
+      state.tenantRelatedLoading = true;
+      state.tenantRelatedError = "";
+      render();
+      Promise.all([dbList("documents"), dbDocumentMetadata([PROPERTY_TAX_CATEGORY])])
+        .then(([documents,taxes]) => {
+          state.tenantDocuments = documents;
+          state.tenantTaxes = taxes;
+        })
+        .catch(error => { state.tenantRelatedError = "Impossible de charger les documents ou taxes : " + (error.message || error); })
+        .finally(() => {
+          state.tenantRelatedLoading = false;
+          if (state.route === "locataires" && state.tenantDetailId === id) render();
+        });
+    },
+    backToLocataires() {
+      state.tenantDetailId = "";
+      state.tenantRelatedError = "";
+      render();
+    },
+    setTenantDetailYear(year) {
+      state.tenantDetailYear = String(year);
       render();
     },
     backToLocaux() {
