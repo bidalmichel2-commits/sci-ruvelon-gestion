@@ -111,6 +111,10 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 .primary { background: var(--blue); color: #fff; }
 .secondary { background: var(--blue-bg); color: var(--blue); border: 1px solid #cfe0f2; }
 .ghost { background: transparent; color: var(--muted); }
+.password-input-wrap { display: flex; align-items: stretch; gap: 6px; width: 100%; }
+.password-input-wrap input { flex: 1 1 auto; min-width: 0; }
+.password-toggle { flex: 0 0 auto; min-width: 82px; min-height: 42px; padding: 0 10px; border: 1px solid #cfe0f2; border-radius: 7px; background: var(--blue-bg); color: var(--blue); font-size: 12px; font-weight: 700; }
+.password-toggle:focus-visible { outline: 3px solid rgba(88,164,232,.35); outline-offset: 2px; }
 
 .notice {
   padding: 10px 12px;
@@ -616,10 +620,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--blue-light); box
 .data-table .num { text-align: right; white-space: nowrap; }
 .table-sub { margin-top: 4px; color: var(--muted); font-size: 11px; }
 .table-action { min-height: 34px; padding: 0 10px; border-radius: 6px; background: var(--blue-bg); color: var(--blue); font-weight: 700; }
+.user-admin-panel > .notice { margin: 14px 16px; }
+.user-admin-list { padding: 0 16px 16px; }
+.user-admin-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 12px; align-items: center; padding: 14px 0; border-top: 1px solid var(--line); }
+.user-admin-main { display: grid; gap: 4px; min-width: 0; }
+.user-admin-main span { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.user-admin-meta, .user-admin-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.user-admin-actions .secondary { width: auto; min-height: 34px; margin: 0; padding: 0 10px; }
+.user-admin-self { grid-column: 1 / -1; color: var(--muted); }
 .muted { color: var(--muted); }
 .mobile-list { display: none; }
 
 @media (max-width: 768px) {
+  .user-admin-row { grid-template-columns: 1fr; gap: 8px; }
+  .user-admin-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .user-admin-actions .table-action, .user-admin-actions .secondary { min-height: 40px; }
   body { overflow: hidden; }
   .app-shell { display: block; height: 100dvh; overflow: hidden; }
   .sidebar {

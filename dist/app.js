@@ -47,6 +47,9 @@
     propertyTaxesLoading: false,
     propertyTaxesError: "",
     propertyTaxYear: String(new Date().getFullYear()),
+    users: [],
+    usersLoading: false,
+    usersError: "",
     user: null,
     profile: null,
     isAdmin: false,
@@ -223,6 +226,8 @@
     if (!data || !data.actif) throw new Error("Acces non autorise pour ce compte.");
     state.profile = data;
     state.isAdmin = data.role === "admin";
+    const usersNav = document.querySelector('[data-route="utilisateurs"]');
+    if (usersNav) usersNav.hidden = !canManageUsers();
   }
 
   function updateUserChrome() {
@@ -236,6 +241,10 @@
 
   function adminHtml(html) {
     return state.isAdmin ? html : "";
+  }
+
+  function canManageUsers() {
+    return state.isAdmin && String(state.profile?.email || "").toLowerCase() === String(cfg.adminEmail || "").toLowerCase();
   }
 
   function canContribute() {
@@ -405,6 +414,7 @@
     if (state.route === "remuneration") screen.innerHTML = renderRemunerationScreen();
     if (state.route === "comptes-rendus") screen.innerHTML = renderReports();
     if (state.route === "notes") screen.innerHTML = renderNotes();
+    if (state.route === "utilisateurs") screen.innerHTML = renderUsers();
     if (state.route === "energie") { setTitle("Dépenses énergie"); screen.innerHTML = renderAnnualLedger("energie") + renderEnergyEntries(); }
     if (state.route === "taxes-foncieres") screen.innerHTML = renderPropertyTaxes();
     if (state.route === "plus") screen.innerHTML = renderPlus();
@@ -1050,6 +1060,144 @@
       </div>`;
   }
 
+  function renderUsers() {
+    setTitle("Utilisateurs");
+    if (!canManageUsers()) return '<div class="notice danger">Accès réservé à Michel Bidal.</div>';
+    const body = state.usersLoading
+      ? '<div class="empty">Chargement des utilisateurs…</div>'
+      : state.usersError
+        ? `<div class="notice danger">${escapeHtml(state.usersError)}</div><button class="secondary" onclick="App.loadUsers()">Réessayer</button>`
+        : state.users.length
+          ? `<div class="user-admin-list">${state.users.map((user) => {
+              const email = escapeHtml(user.email);
+              const emailArg = encodeURIComponent(user.email);
+              const isSelf = email.toLowerCase() === String(state.profile?.email || "").toLowerCase();
+              return `<article class="user-admin-row">
+                <div class="user-admin-main"><strong>${escapeHtml(user.nom)}</strong><span>${email}</span></div>
+                <div class="user-admin-meta"><span class="chip">${user.role === "admin" ? "Administrateur" : "Lecture seule"}</span><span class="chip ${user.actif ? "green" : "orange"}">${user.actif ? "Actif" : "Désactivé"}</span></div>
+                <div class="user-admin-actions"><button class="table-action" onclick="App.openUserForm('${emailArg}')">Gérer</button><button class="secondary" onclick="App.openUserPassword('${emailArg}')">Définir mot de passe</button><button class="secondary" onclick="App.sendUserPasswordLink('${emailArg}')">Envoyer un lien</button></div>
+                ${isSelf ? '<small class="user-admin-self">Compte administrateur connecté</small>' : ""}
+              </article>`;
+            }).join("")}</div>`
+          : '<div class="empty">Aucun utilisateur autorisé.</div>';
+    return `<div class="desktop-wrap"><section class="panel user-admin-panel"><div class="panel-head"><h3>Comptes autorisés</h3><button class="table-action" onclick="App.loadUsers()">Actualiser</button></div><div class="notice info">Tu peux gérer les droits, définir un mot de passe et envoyer un lien de réinitialisation. Le mot de passe choisi n’est pas conservé ni affiché après validation.</div>${body}</section></div>`;
+  }
+
+  async function loadUsers() {
+    if (!canManageUsers()) return toast("Gestion des utilisateurs réservée à Michel Bidal.");
+    if (!sb || state.localMode) {
+      state.usersError = "La gestion des utilisateurs est disponible uniquement sur la base en ligne.";
+      state.usersLoading = false;
+      if (state.route === "utilisateurs") render();
+      return;
+    }
+    state.usersLoading = true;
+    state.usersError = "";
+    if (state.route === "utilisateurs") render();
+    try {
+      const { data, error } = await sb.from("app_users").select("email,nom,role,actif,created_at").order("nom", { ascending: true });
+      if (error) throw error;
+      state.users = data || [];
+    } catch (error) {
+      state.usersError = error.message || "Impossible de charger les utilisateurs.";
+    } finally {
+      state.usersLoading = false;
+      if (state.route === "utilisateurs") render();
+    }
+  }
+
+  function openUserForm(email) {
+    if (!canManageUsers()) return toast("Gestion des utilisateurs réservée à Michel Bidal.");
+    email = decodeURIComponent(email);
+    const user = state.users.find((item) => item.email.toLowerCase() === String(email).toLowerCase());
+    if (!user) return toast("Utilisateur introuvable.");
+    const isSelf = user.email.toLowerCase() === String(state.profile?.email || "").toLowerCase();
+    const fields = [
+      { name: "email", label: "Identifiant e-mail", value: user.email, readonly: true },
+      { name: "nom", label: "Nom affiché", value: user.nom, required: true }
+    ];
+    if (isSelf) {
+      fields.push({ type: "hidden", name: "role", value: user.role }, { type: "hidden", name: "actif", value: "true" });
+    } else {
+      fields.push(
+        { type: "select", name: "role", label: "Droits", value: user.role, options: [{ value: "lecture", label: "Lecture seule" }, { value: "admin", label: "Administrateur" }] },
+        { type: "checkbox", name: "actif", label: "Compte actif", value: user.actif }
+      );
+    }
+    openModal(`Gérer ${user.nom}`, formHtml(fields, "", "saveUser"));
+  }
+
+  function openUserPassword(email) {
+    if (!canManageUsers()) return toast("Gestion des utilisateurs réservée à Michel Bidal.");
+    email = decodeURIComponent(email);
+    const user = state.users.find((item) => item.email.toLowerCase() === email.toLowerCase());
+    if (!user || !user.actif) return toast("Active d’abord ce compte avant de définir son mot de passe.");
+    openModal(`Définir le mot de passe · ${user.nom}`, `<div class="notice info">Le mot de passe sera transmis de façon sécurisée à Supabase. Communique-le à l’utilisateur par téléphone ou par un canal distinct du courriel.</div>${formHtml([
+      { type: "hidden", name: "email", value: user.email },
+      { type: "password", name: "password", label: "Nouveau mot de passe (12 caractères minimum)", value: "", min: "12", required: true, autocomplete: "new-password" },
+      { type: "password", name: "confirm_password", label: "Confirmer le mot de passe", value: "", min: "12", required: true, autocomplete: "new-password" }
+    ], "", "saveUserPassword")}`);
+  }
+
+  async function saveUserPassword(form) {
+    if (!canManageUsers() || !sb || !form.reportValidity()) return;
+    const submit = form.querySelector('[type="submit"]');
+    const email = String(form.elements.email.value || "").trim().toLowerCase();
+    const password = String(form.elements.password.value || "");
+    const user = state.users.find((item) => item.email.toLowerCase() === email);
+    if (!user || !user.actif) return toast("Utilisateur actif introuvable.");
+    if (password.length < 12) return toast("Choisis un mot de passe d’au moins 12 caractères.");
+    if (password !== form.elements.confirm_password.value) return toast("Les deux mots de passe ne correspondent pas.");
+    submit.disabled = true;
+    try {
+      const { error } = await sb.functions.invoke("admin-set-user-password", { body: { email, password } });
+      if (error) throw error;
+      form.reset();
+      closeModal();
+      toast("Mot de passe défini. Communique-le à l’utilisateur par un canal sécurisé.");
+    } catch (error) {
+      toast(error.message || "Impossible de définir le mot de passe.");
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  async function saveUser(form) {
+    if (!canManageUsers() || !form.reportValidity()) return;
+    const data = Object.fromEntries(new FormData(form).entries());
+    const email = String(data.email || "").trim().toLowerCase();
+    const current = state.users.find((user) => user.email.toLowerCase() === email);
+    if (!current) return toast("Utilisateur introuvable.");
+    const isSelf = email === String(state.profile?.email || "").toLowerCase();
+    const role = isSelf ? current.role : String(data.role || "lecture");
+    const actif = isSelf ? true : !!form.elements.actif.checked;
+    const demotesAdmin = current.role === "admin" && current.actif && (!actif || role !== "admin");
+    if (demotesAdmin && state.users.filter((user) => user.role === "admin" && user.actif).length <= 1) {
+      return toast("Impossible de désactiver le dernier administrateur.");
+    }
+    try {
+      const { error } = await sb.from("app_users").update({ nom: String(data.nom || "").trim(), role, actif }).eq("email", email);
+      if (error) throw error;
+      closeModal();
+      await loadUsers();
+      toast("Droits utilisateur enregistrés.");
+    } catch (error) { toast(error.message || "Enregistrement impossible."); }
+  }
+
+  async function sendUserPasswordLink(email) {
+    if (!canManageUsers() || !sb) return;
+    email = decodeURIComponent(email);
+    const user = state.users.find((item) => item.email.toLowerCase() === String(email).toLowerCase());
+    if (!user || !user.actif) return toast("Active d’abord ce compte avant d’envoyer un lien.");
+    if (!confirm(`Envoyer un lien de réinitialisation à ${user.email} ?`)) return;
+    try {
+      const redirectTo = `${window.location.origin}${window.location.pathname}`;
+      const { error } = await sb.auth.resetPasswordForEmail(user.email, { redirectTo });
+      if (error) throw error;
+      toast("Lien de mot de passe envoyé à " + user.email + ".");
+    } catch (error) { toast(error.message || "Envoi du lien impossible."); }
+  }
+
   function renderTravauxScreen() {
     setTitle("Travaux");
     return `<div class="desktop-wrap">${renderTravaux()}</div>`;
@@ -1583,6 +1731,8 @@
         const action = form.dataset.action || "save";
         if (action === "saveRemuneration") await window.App.saveRemuneration(form);
         else if (action === "savePassword") await window.App.savePassword(form);
+        else if (action === "saveUser") await window.App.saveUser(form);
+        else if (action === "saveUserPassword") await window.App.saveUserPassword(form);
         else if (action === "saveReport") await window.App.saveReport(form);
         else if (action === "saveContribution") await window.App.saveContribution(form);
         else if (action === "saveAnnual") await window.App.saveAnnual(form);
@@ -1630,12 +1780,14 @@
     }
     if (f.type === "textarea") return `<label class="field-full">${escapeHtml(f.label)}<textarea name="${f.name}" ${attrs}>${escapeHtml(f.value || "")}</textarea></label>`;
     if (f.type === "checkbox") return `<label class="notice info"><input type="checkbox" name="${f.name}" value="true" ${f.value ? "checked" : ""} ${attrs}> ${escapeHtml(f.label)}</label>`;
+    if (f.type === "password") return `<label>${escapeHtml(f.label)}<span class="password-input-wrap"><input type="password" name="${f.name}" value="${escapeHtml(f.value ?? "")}" ${attrs}><button class="password-toggle" type="button" aria-pressed="false" onclick="App.togglePasswordVisibility(this)">Afficher</button></span></label>`;
     return `<label>${escapeHtml(f.label)}<input type="${f.type || "text"}" name="${f.name}" value="${escapeHtml(f.value ?? "")}" ${attrs}></label>`;
   }
 
   function fieldAttrs(f) {
     return [
       f.step ? `step="${escapeHtml(f.step)}"` : "",
+      f.autocomplete ? `autocomplete="${escapeHtml(f.autocomplete)}"` : "",
       f.min !== undefined ? `min="${escapeHtml(f.min)}"` : "",
       f.readonly ? "readonly" : "",
       f.required ? "required" : "",
@@ -1844,8 +1996,26 @@
 
   window.App = {
     closeModal,
+    togglePasswordVisibility(button) {
+      const input = button?.parentElement?.querySelector('input[type="password"], input[type="text"]');
+      if (!input) return;
+      const visible = input.type === "password";
+      input.type = visible ? "text" : "password";
+      button.textContent = visible ? "Masquer" : "Afficher";
+      button.setAttribute("aria-pressed", String(visible));
+      button.setAttribute("aria-label", `${visible ? "Masquer" : "Afficher"} le mot de passe`);
+    },
     go(route) {
+      if (route === "utilisateurs" && !canManageUsers()) {
+        toast("Gestion des utilisateurs réservée à Michel Bidal.");
+        return;
+      }
       state.route = route;
+      if (route === "utilisateurs") {
+        state.usersLoading = true;
+        render();
+        return loadUsers();
+      }
       if (route === "comptes-rendus") { state.reportId = ""; return loadReportRecords(); }
       if (route === "notes") {
         state.contributionsLoading = true;
@@ -2346,6 +2516,12 @@
         { type: "password", name: "confirm_password", label: "Confirmer le mot de passe", value: "", min: "8" }
       ], "", "savePassword"));
     },
+    loadUsers,
+    openUserForm,
+    saveUser,
+    openUserPassword,
+    saveUserPassword,
+    sendUserPasswordLink,
     fillLoyerFromBail(bailId, form) {
       const d = loyerFromBail(bailId);
       if (!d || !form) return;
