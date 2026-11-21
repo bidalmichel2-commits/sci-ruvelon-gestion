@@ -34,14 +34,16 @@ Deno.serve(async (req: Request) => {
   try {
     const projectUrl = Deno.env.get("SUPABASE_URL");
     const publishableKeys = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS");
+    const secretKeys = Deno.env.get("SUPABASE_SECRET_KEYS");
     const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     const publishableKey = publishableKeys ? JSON.parse(publishableKeys).default : anonKey;
-    if (!projectUrl || !publishableKey || !serviceRoleKey) throw new Error("Configuration serveur indisponible.");
+    const serviceKey = secretKeys ? JSON.parse(secretKeys).default : serviceRoleKey;
+    if (!projectUrl || !publishableKey || !serviceKey) throw new Error("Configuration serveur indisponible.");
 
     const authClient = createClient(projectUrl, publishableKey, {
       auth: { persistSession: false, autoRefreshToken: false },
-      global: { headers: { Authorization: `Bearer ${token}` } },
+      global: { headers: { Authorization: "Bearer " + token } },
     });
     const { data: authData, error: authError } = await authClient.auth.getUser(token);
     if (authError || authData.user?.email?.toLowerCase() !== ADMIN_EMAIL) {
@@ -73,7 +75,7 @@ Deno.serve(async (req: Request) => {
       return json({ error: "Utilisateur actif introuvable." }, 404, origin);
     }
 
-    const adminClient = createClient(projectUrl, serviceRoleKey, {
+    const adminClient = createClient(projectUrl, serviceKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     let targetUser = null;
