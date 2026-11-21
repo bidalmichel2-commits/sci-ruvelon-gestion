@@ -491,22 +491,25 @@
 
     const years = [...totals.keys()].sort((a, b) => Number(b) - Number(a));
     const rows = years.map((year) => {
-      const forecast = Number(year) === forecastYear ? forecastAnnualRentHt(forecastYear) : null;
+      const bailTotal = forecastAnnualRentHt(Number(year));
+      const forecast = Number(year) === forecastYear ? bailTotal : null;
       return `<tr><td><strong>${year}</strong>${Number(year) === forecastYear ? ` <span class="chip orange">Prévision</span>` : ""}</td>
+        <td class="num"><strong>${euro(bailTotal)}</strong></td>
         <td class="num">${euro(totals.get(year))}</td>
         <td class="num">${forecast === null ? "-" : `<strong>${euro(forecast)}</strong>`}</td></tr>`;
     }).join("");
     const mobileRows = years.map((year) => {
-      const forecast = Number(year) === forecastYear ? forecastAnnualRentHt(forecastYear) : null;
+      const bailTotal = forecastAnnualRentHt(Number(year));
+      const forecast = Number(year) === forecastYear ? bailTotal : null;
       return `<div class="row"><div class="row-main"><div class="row-title">${year}${Number(year) === forecastYear ? " · Prévision" : ""}</div></div>
-        <div class="chips"><span class="chip">Loyers enregistrés HT hors charges ${euro(totals.get(year))}</span>${forecast === null ? "" : `<span class="chip orange">Prévision HT ${euro(forecast)}</span>`}</div></div>`;
+        <div class="chips"><span class="chip">Baux HT hors charges ${euro(bailTotal)}</span><span class="chip">Pointage saisi ${euro(totals.get(year))}</span>${forecast === null ? "" : `<span class="chip orange">Prévision HT ${euro(forecast)}</span>`}</div></div>`;
     }).join("");
 
     return `<div class="panel annual-rent-panel">
-      <div class="panel-head"><div><h3>Récapitulatif annuel des loyers HT hors charges</h3><div class="table-sub">Loyers enregistrés par année et estimation sur les baux actifs pour ${forecastYear}</div></div></div>
-      <div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th class="num">Loyers enregistrés · HT hors charges</th><th class="num">Prévision · HT hors charges</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="panel-head"><div><h3>Récapitulatif annuel des loyers</h3><div class="table-sub">Montants HT hors charges : calcul des baux, pointages saisis et prévision N+1</div></div></div>
+      <div class="table-wrap desktop-table"><table class="data-table"><thead><tr><th>Année</th><th class="num">Total annuel selon les baux · HT</th><th class="num">Pointages enregistrés · HT</th><th class="num">Prévision N+1 · HT</th></tr></thead><tbody>${rows}</tbody></table></div>
       <div class="list mobile-list">${mobileRows}</div>
-      <div class="table-sub">Les loyers enregistrés incluent les factures suivies, payées ou non. La prévision suppose des loyers inchangés, le maintien des baux actifs et la poursuite des renouvellements automatiques. Elle ne tient pas compte d’une vacance ni d’une hausse de loyer.</div>
+      <div class="table-sub">Le total annuel selon les baux additionne les loyers HT mensuels sur leur période de validité et ne dépend pas du nombre de pointages saisis. Les pointages enregistrés incluent les factures suivies, payées ou non. La prévision N+1 suppose des loyers inchangés et la poursuite des renouvellements automatiques, sans vacance ni hausse.</div>
     </div>`;
   }
 
