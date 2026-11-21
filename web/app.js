@@ -2603,6 +2603,14 @@
         if (form.elements.tva) form.elements.tva.value = tva.toFixed(2);
       }
 
+      if (source === "ttc") {
+        const divisor = 1 + tvaRate / 100;
+        const recalculatedHt = divisor > 0 ? money(loyerTtc / divisor) : loyerTtc;
+        tva = money(loyerTtc - recalculatedHt);
+        if (form.elements.loyer_ht) form.elements.loyer_ht.value = recalculatedHt.toFixed(2);
+        if (form.elements.tva) form.elements.tva.value = tva.toFixed(2);
+      }
+
       if (source === "ht" || source === "tva" || source === "bail") {
         loyerTtc = money(loyerHt + tva);
         if (form.elements.loyer_ttc) form.elements.loyer_ttc.value = loyerTtc.toFixed(2);
