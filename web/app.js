@@ -26,6 +26,9 @@
   const tables = ["locaux", "locataires", "baux", "loyers_mensuels", "travaux", "remuneration_gerant"];
   const state = {
     route: "dashboard",
+    localDetailId: "",
+    localDetailTab: "informations",
+    localForecastYear: String(Number(currentMonth().slice(0, 4)) + 1),
     month: currentMonth(),
     year: String(new Date().getFullYear()),
     travauxYear: "",
@@ -405,7 +408,7 @@
     const screen = $("#screen");
     if (state.route === "dashboard") screen.innerHTML = renderDashboard();
     if (state.route === "pointage") screen.innerHTML = renderPointage();
-    if (state.route === "locaux") screen.innerHTML = renderLocaux();
+    if (state.route === "locaux") screen.innerHTML = state.localDetailId ? renderLocalDetail() : renderLocaux();
     if (state.route === "locataires") screen.innerHTML = renderLocataires();
     if (state.route === "baux") screen.innerHTML = renderBaux();
     if (state.route === "travaux") screen.innerHTML = renderTravauxScreen();
@@ -692,7 +695,7 @@
             <table class="data-table">
               <thead><tr><th>Numero</th><th>Designation</th><th>Niveau</th><th>Surface</th><th>Statut</th><th class="num">Loyer HT</th><th class="num">Charges</th><th class="num">Total</th><th></th></tr></thead>
               <tbody>${rows.map((l) => `<tr>
-                <td><strong>${escapeHtml(l.code_local)}</strong></td>
+                <td><button class="local-open-link" onclick="App.viewLocal('${escapeHtml(l.id)}')"><strong>${escapeHtml(l.code_local)}</strong></button></td>
                 <td>${escapeHtml(l.designation || "")}</td>
                 <td>${escapeHtml(l.niveau || "")}</td>
                 <td>${Number(l.surface_m2 || 0).toFixed(2)} m2</td>
@@ -704,12 +707,176 @@
           </div>
           <div class="list mobile-list">${rows.length ? rows.map((l) => `
             <div class="row">
-              <div class="row-main"><div><div class="row-title">${escapeHtml(l.code_local)} - ${escapeHtml(l.designation)}</div><div class="row-sub">${escapeHtml(l.niveau || "")} - ${Number(l.surface_m2 || 0).toFixed(2)} m2</div></div><span class="chip ${l.statut === "Loue" ? "green" : "orange"}">${escapeHtml(l.statut)}</span></div>
+              <div class="row-main"><div><button class="local-open-link" onclick="event.stopPropagation();App.viewLocal('${escapeHtml(l.id)}')"><span class="row-title">${escapeHtml(l.code_local)} - ${escapeHtml(l.designation)}</span></button><div class="row-sub">${escapeHtml(l.niveau || "")} - ${Number(l.surface_m2 || 0).toFixed(2)} m2</div></div><span class="chip ${l.statut === "Loue" ? "green" : "orange"}">${escapeHtml(l.statut)}</span></div>
               <div class="chips"><span class="chip">HT ${euro(l.loyer_ht)}</span><span class="chip">Charges ${euro(l.charges_mensuelles)}</span><span class="chip green">Total ${euro(localMonthlyTotal(l))}</span></div>
               ${adminHtml(`<div class="actions"><button onclick="App.openLocal('${l.id}')">Modifier</button></div>`)}
             </div>`).join("") : `<div class="empty">Aucun local</div>`}</div>
         </div>
       </div>`;
+  }
+
+  function localForecast(localId, year) {
+    const linkedLeases = state.data.baux.filter(function (bail) {
+      return bail.local_id === localId && rentMonthsInYear(bail, year) > 0;
+    });
+    const rentHt = round2(linkedLeases.reduce(function (sum, bail) {
+      return sum + money(bail.loyer_ht) * rentMonthsInYear(bail, year);
+    }, 0));
+    const charges = round2(linkedLeases.reduce(function (sum, bail) {
+      return sum + money(bail.charges_mensuelles) * rentMonthsInYear(bail, year);
+    }, 0));
+    const currentYear = Number(currentMonth().slice(0, 4));
+    const workRows = state.data.travaux.filter(function (row) { return row.local_id === localId; });
+    const costs = workRows.reduce(function (result, row) {
+      const detail = travauxDetails(row);
+      if (detail.rubrique === "etude") return result;
+      const recurring = detail.rubrique === "entretien" &&
+        entretienFrequences.includes(detail.entretien_frequence) && detail.entretien_frequence !== "Ponctuel";
+      const plannedYear = workSchedule(row).annee || 0;
+      const actualYear = Number(String(row.date_realisation || "").slice(0, 4)) || plannedYear;
+      const actual = money(row.montant_reel);
+      if (actual && actualYear === year) result.actual += actual;
+      const estimate = money(detail.devis_ht) || money(row.montant_estime);
+      const planned = recurring ? year >= (plannedYear || currentYear) : plannedYear === year;
+      const cancelled = /abandonn|sans suite/i.test(row.statut || "");
+      if (planned && !actual && !cancelled && detail.entretien_exclure_budget !== true) result.planned += estimate;
+      return result;
+    }, {planned: 0, actual: 0});
+    return {
+      rentHt: rentHt,
+      charges: charges,
+      totalWithCharges: round2(rentHt + charges),
+      plannedCosts: round2(costs.planned),
+      actualCosts: round2(costs.actual),
+      leases: linkedLeases,
+      works: workRows
+    };
+  }
+
+  function renderLocalDetail() {
+    const local = state.data.locaux.find(function (row) { return row.id === state.localDetailId; });
+    if (!local) {
+      state.localDetailId = "";
+      return renderLocaux();
+    }
+    setTitle("Locaux");
+    const year = Number(state.localForecastYear) || Number(currentMonth().slice(0, 4)) + 1;
+    const currentYear = Number(currentMonth().slice(0, 4));
+    const baux = state.data.baux.filter(function (bail) { return bail.local_id === local.id; })
+      .sort(function (a, b) { return String(b.date_debut || "").localeCompare(String(a.date_debut || "")); });
+    const occupants = Array.from(new Set(baux.map(function (bail) { return bail.locataire_id; }).filter(Boolean)))
+      .map(function (id) { return localLabel("locataires", id); }).filter(Boolean);
+    const pointages = state.data.loyers_mensuels.filter(function (row) {
+      return row.local_id === local.id && String(row.mois || "").slice(0, 4) === String(year);
+    });
+    const pointageHt = sum(pointages, "loyer_ht");
+    const pointagePaye = sum(pointages, "total_paye");
+    const forecast = localForecast(local.id, year);
+    const yearOptions = [currentYear, currentYear + 1].map(function (item) {
+      return '<option value="' + item + '" ' + (item === year ? "selected" : "") + '>' + item + '</option>';
+    }).join("");
+    const field = function (label, value) {
+      return '<div class="local-detail-item"><span>' + label + '</span><strong>' + (value || "—") + '</strong></div>';
+    };
+    const leaseRows = baux.length ? baux.map(function (bail) {
+      const secondary = isSecondaryBail(bail);
+      const observations = String(bail.observations || "").replace(/\[[^\]]+\]/g, "").trim();
+      return '<article class="row"><div class="row-main"><div><div class="row-title">' +
+        escapeHtml(localLabel("locataires", bail.locataire_id) || "Preneur non renseigné") +
+        '</div><div class="row-sub">' + escapeHtml(bail.type_bail || "Bail") + ' · ' +
+        (fmtDate(bail.date_debut) || "Début à préciser") + ' → ' + (fmtDate(bail.date_fin) || "Sans date de fin") +
+        '</div></div><span class="chip ' + (bail.statut === "Actif" ? "green" : "") + '">' +
+        escapeHtml(bail.statut || "") + '</span></div><div class="chips"><span class="chip">Loyer HT ' +
+        euro(bail.loyer_ht) + '</span><span class="chip">Charges ' + euro(bail.charges_mensuelles) +
+        '</span><span class="chip">Dépôt ' + euro(bail.depot_garantie) + '</span>' +
+        (secondary ? '<span class="chip orange">Local secondaire · loyer porté par le bail principal</span>' : "") +
+        (bail.renouvellement_auto ? '<span class="chip green">Renouvellement automatique</span>' : "") +
+        '</div>' + (observations ? '<div class="row-sub">' + escapeHtml(observations) + '</div>' : "") +
+        adminHtml('<div class="actions">' + (leaseDocumentId(bail) ? '<button onclick="App.downloadLease(\'' + escapeHtml(bail.id) + '\',this)">Télécharger le bail</button>' : '') + '<button onclick="App.openBail(\'' + escapeHtml(bail.id) + '\')">Modifier le bail</button></div>') +
+        '</article>';
+    }).join("") : '<div class="empty">Aucun bail rattaché à ce local.</div>';
+    const works = state.data.travaux.filter(function (row) { return row.local_id === local.id; });
+    const workRows = works.length ? works.map(function (row) {
+      const detail = travauxDetails(row);
+      return '<article class="row"><div class="row-main"><strong>' + escapeHtml(row.titre) +
+        '</strong><span class="chip">' + escapeHtml(String(workSchedule(row).annee || "À définir")) +
+        '</span></div><div class="row-sub">' + escapeHtml(row.statut || "") + '</div><div class="chips"><span class="chip">Estimation HT ' +
+        euro(detail.devis_ht || row.montant_estime) + '</span>' +
+        (!detail.devis_ht && !row.montant_estime && detail.budget_indique ? '<span class="chip orange">Budget à qualifier ' + euro(detail.budget_indique) + '</span>' : '') +
+        (row.montant_reel ? '<span class="chip green">Réalisé HT ' + euro(row.montant_reel) + '</span>' : "") +
+        '</div>' + (detail.notes ? '<div class="row-sub">' + escapeHtml(detail.notes) + '</div>' : "") + '</article>';
+    }).join("") : '<div class="empty">Aucun travaux ou entretien rattaché.</div>';
+    const pointageRows = pointages.length ? pointages.map(function (row) {
+      return '<article class="row"><div class="row-main"><strong>' + escapeHtml(monthLabel(row.mois)) +
+        '</strong><span class="chip ' + (row.facture_meg_faite ? "green" : "orange") + '">' +
+        (row.facture_meg_faite ? "MEG faite" : "MEG à faire") + '</span></div><div class="chips"><span class="chip">Loyer HT ' +
+        euro(row.loyer_ht) + '</span><span class="chip">Charges ' + euro(row.charges_mensuelles) +
+        '</span><span class="chip">Encaissé ' + euro(row.total_paye) + '</span></div></article>';
+    }).join("") : '<div class="empty">Aucun pointage enregistré pour ' + year + '.</div>';
+    const plannedWorks = works.filter(function (row) {
+      const detail = travauxDetails(row);
+      return detail.rubrique !== "etude" && (workSchedule(row).annee === year ||
+        String(row.date_realisation || "").slice(0, 4) === String(year));
+    });
+    const scheduledRows = plannedWorks.length ? plannedWorks.map(function (row) {
+      const detail = travauxDetails(row);
+      return '<article class="row"><div class="row-main"><div><div class="row-title">' +
+        escapeHtml(row.titre) + '</div><div class="row-sub">' +
+        escapeHtml(detail.rubrique === "entretien" ? "Entretien" : "Travaux") + ' · ' +
+        escapeHtml(row.statut || "") + '</div></div><span class="chip">' +
+        escapeHtml(String(workSchedule(row).annee || year)) + '</span></div><div class="chips"><span class="chip">Prévu HT ' +
+        euro(detail.devis_ht || row.montant_estime) + '</span>' +
+        (!detail.devis_ht && !row.montant_estime && detail.budget_indique ? '<span class="chip orange">Budget à qualifier ' + euro(detail.budget_indique) + '</span>' : '') +
+        (row.montant_reel ? '<span class="chip green">Réalisé HT ' + euro(row.montant_reel) + '</span>' : "") +
+        '</div></article>';
+    }).join("") : '<div class="empty">Aucune opération programmée pour ' + year + ' sur ce local.</div>';
+    const tabs = '<div class="local-detail-tabs" role="tablist" aria-label="Sections de la fiche local">' +
+      '<button role="tab" aria-selected="' + (state.localDetailTab === "informations") + '" class="' +
+      (state.localDetailTab === "informations" ? "active" : "") +
+      '" onclick="App.setLocalDetailTab(\'informations\')">Informations et baux</button>' +
+      '<button role="tab" aria-selected="' + (state.localDetailTab === "previsionnel") + '" class="' +
+      (state.localDetailTab === "previsionnel" ? "active" : "") +
+      '" onclick="App.setLocalDetailTab(\'previsionnel\')">Prévisionnel coûts / revenus</button></div>';
+    const observations = '<div class="local-observations"><strong>Observations</strong><p>' +
+      escapeHtml(local.observations || "Aucune observation.") + '</p></div>';
+    const info = '<div class="local-detail-grid"><section class="panel"><div class="panel-head"><h3>Informations du local</h3></div>' +
+      '<div class="local-detail-items">' + field("Numéro", escapeHtml(local.code_local)) +
+      field("Désignation", escapeHtml(local.designation)) + field("Niveau", escapeHtml(local.niveau)) +
+      field("Surface", Number(local.surface_m2 || 0).toFixed(2) + " m²") + field("Statut", escapeHtml(local.statut)) +
+      field("Occupants", escapeHtml(occupants.join(", "))) + field("Loyer de référence HT", euro(local.loyer_ht)) +
+      field("Charges mensuelles", euro(local.charges_mensuelles)) + field("Total local", euro(localMonthlyTotal(local))) +
+      field("Dépôt de garantie", euro(local.depot_garantie)) + field("TVA loyer (%)", Number(local.tva_loyer || 0).toFixed(2)) +
+      field("Régime TVA", escapeHtml(local.regime_tva)) + field("Disponible depuis", fmtDate(local.date_disponibilite)) +
+      field("Local actif", local.actif === false ? "Non" : "Oui") + '</div>' + observations + '</section>' +
+      '<section class="panel"><div class="panel-head"><h3>Baux et preneurs (' + baux.length + ')</h3>' +
+      adminHtml('<button class="primary" onclick="App.openBail()">Ajouter un bail</button>') +
+      '</div><div class="list">' + leaseRows + '</div></section>' +
+      '<section class="panel"><div class="panel-head"><h3>Pointage du loyer · ' + year + '</h3><span class="chip">' +
+      pointages.length + ' ligne(s)</span></div><div class="local-detail-items">' +
+      field("Loyers HT enregistrés", euro(pointageHt)) + field("Montants encaissés", euro(pointagePaye)) +
+      '</div><div class="list">' + pointageRows + '</div></section>' +
+      '<section class="panel"><div class="panel-head"><h3>Travaux et entretien liés</h3></div><div class="list">' + workRows + '</div></section></div>';
+    const forecastPanel = '<section class="panel local-forecast"><div class="panel-head"><div><h3>Prévisionnel du local</h3>' +
+      '<div class="table-sub">Estimation selon les baux et opérations rattachés. Les dépenses communes non ventilées restent à part.</div></div>' +
+      '<label>Année<select aria-label="Année du prévisionnel local" onchange="App.setLocalForecastYear(this.value)">' +
+      yearOptions + '</select></label></div><div class="cards">' +
+      '<div class="card green"><small>Revenus locatifs HT</small><strong>' + euro(forecast.rentHt) + '</strong></div>' +
+      '<div class="card"><small>Charges prévues aux baux</small><strong>' + euro(forecast.charges) + '</strong></div>' +
+      '<div class="card"><small>Total appelé avec charges</small><strong>' + euro(forecast.totalWithCharges) + '</strong></div>' +
+      '<div class="card orange"><small>Travaux / entretien prévus HT</small><strong>' + euro(forecast.plannedCosts) + '</strong></div>' +
+      '<div class="card"><small>Dépenses réalisées HT</small><strong>' + euro(forecast.actualCosts) + '</strong></div>' +
+      '<div class="card"><small>Pointage enregistré HT</small><strong>' + euro(pointageHt) + '</strong></div></div>' +
+      '<div class="notice info">Les baux marqués « local secondaire » sont listés mais leur loyer est porté par le bail principal. Les coûts d’énergie et autres dépenses communes ne sont pas répartis entre les locaux.</div>' +
+      '<div class="panel-head"><h3>Opérations budgétées · ' + year + '</h3></div><div class="list">' + scheduledRows + '</div></section>';
+    return '<div class="desktop-wrap local-detail-screen"><div class="local-detail-top">' +
+      '<button class="table-action" onclick="App.backToLocaux()">← Tous les locaux</button>' +
+      adminHtml('<button class="secondary" onclick="App.openLocal(\'' + escapeHtml(local.id) + '\')">Modifier le local</button>') +
+      '</div><section class="panel local-detail-heading"><div><div class="eyebrow">Fiche local</div><h2>' +
+      escapeHtml(local.code_local || "Local sans numéro") + '</h2><div class="table-sub">' +
+      escapeHtml(local.designation || "") + '</div></div><span class="chip ' +
+      (local.statut === "Loue" ? "green" : local.statut === "Disponible" ? "orange" : "") + '">' +
+      escapeHtml(local.statut || "Statut à préciser") + '</span></section>' + tabs +
+      (state.localDetailTab === "previsionnel" ? forecastPanel : info) + '</div>';
   }
 
   function renderLocataires() {
@@ -2070,6 +2237,7 @@
         return;
       }
       state.route = route;
+      state.localDetailId = "";
       if (route === "utilisateurs") {
         state.usersLoading = true;
         render();
@@ -2083,6 +2251,26 @@
       }
       if (route === "energie" || route === "entretien") return loadAnnualRecords(route);
       if (route === "taxes-foncieres") return loadPropertyTaxes();
+      render();
+    },
+    viewLocal(id) {
+      if (!state.data.locaux.some(local => local.id === id)) return;
+      state.route = "locaux";
+      state.localDetailId = id;
+      state.localDetailTab = "informations";
+      render();
+    },
+    backToLocaux() {
+      state.localDetailId = "";
+      state.localDetailTab = "informations";
+      render();
+    },
+    setLocalDetailTab(tab) {
+      state.localDetailTab = tab === "previsionnel" ? tab : "informations";
+      render();
+    },
+    setLocalForecastYear(year) {
+      state.localForecastYear = String(year);
       render();
     },
     setAnnualYear(kind,year) {
